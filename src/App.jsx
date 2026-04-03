@@ -14,6 +14,15 @@ import PortalPage from './pages/PortalPage'
 import LoginPage from './pages/LoginPage'
 import MainMenu from './components/MainMenu'
 
+function withTimeout(promise, ms = 6000) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Timeout exceeded')), ms)
+    ),
+  ])
+}
+
 export default function App() {
   const [entered, setEntered] = useState(false)
   const [page, setPage] = useState('home')
@@ -41,7 +50,10 @@ export default function App() {
       try {
         setLoadingAuth(true)
 
-        const { data, error } = await supabase.auth.getSession()
+        const { data, error } = await withTimeout(
+          supabase.auth.getSession(),
+          6000
+        )
 
         if (error) {
           console.log('getSession error:', error)
@@ -54,18 +66,23 @@ export default function App() {
         setSession(currentSession)
 
         if (currentSession?.user?.id) {
-          const loadedProfile = await fetchProfile(currentSession.user.id)
+          const loadedProfile = await withTimeout(
+            fetchProfile(currentSession.user.id),
+            6000
+          )
+
           if (!active) return
           setProfile(loadedProfile)
         } else {
           setProfile(null)
         }
       } catch (error) {
-        console.log('initAuth crash:', error)
-        if (active) {
-          setSession(null)
-          setProfile(null)
-        }
+        console.log('initAuth timeout/crash:', error)
+
+        if (!active) return
+
+        setSession(null)
+        setProfile(null)
       } finally {
         if (active) {
           setLoadingAuth(false)
@@ -85,17 +102,22 @@ export default function App() {
         setSession(newSession || null)
 
         if (newSession?.user?.id) {
-          const loadedProfile = await fetchProfile(newSession.user.id)
+          const loadedProfile = await withTimeout(
+            fetchProfile(newSession.user.id),
+            6000
+          )
+
           if (!active) return
           setProfile(loadedProfile)
         } else {
           setProfile(null)
         }
       } catch (error) {
-        console.log('onAuthStateChange crash:', error)
-        if (active) {
-          setProfile(null)
-        }
+        console.log('onAuthStateChange timeout/crash:', error)
+
+        if (!active) return
+
+        setProfile(null)
       } finally {
         if (active) {
           setLoadingAuth(false)
@@ -130,7 +152,12 @@ export default function App() {
   }
 
   async function logout() {
-    await supabase.auth.signOut()
+    try {
+      await supabase.auth.signOut()
+    } catch (error) {
+      console.log('logout error:', error)
+    }
+
     localStorage.removeItem('assistant_session')
     setSession(null)
     setProfile(null)
@@ -145,19 +172,13 @@ export default function App() {
 
   if (loadingAuth) {
     return (
-      <div style={{ padding: 20, textAlign: 'center' }}>
-        <p>Chargement...</p>
+      <div style={styles.loadingPage}>
+        <p style={styles.loadingText}>Chargement...</p>
+
         <button
           type="button"
           onClick={() => window.location.reload()}
-          style={{
-            padding: '12px 16px',
-            borderRadius: 12,
-            border: 'none',
-            background: '#2b0a78',
-            color: '#fff',
-            fontWeight: 'bold',
-          }}
+          style={styles.reloadButton}
         >
           Actualiser
         </button>
@@ -192,19 +213,13 @@ export default function App() {
 
   if (session && !profile) {
     return (
-      <div style={{ padding: 20, textAlign: 'center' }}>
-        <p>Chargement profil...</p>
+      <div style={styles.loadingPage}>
+        <p style={styles.loadingText}>Chargement profil...</p>
+
         <button
           type="button"
           onClick={logout}
-          style={{
-            padding: '12px 16px',
-            borderRadius: 12,
-            border: 'none',
-            background: '#d91e18',
-            color: '#fff',
-            fontWeight: 'bold',
-          }}
+          style={styles.resetButton}
         >
           Réinitialiser session
         </button>
@@ -233,6 +248,7 @@ export default function App() {
           />
         )
       }
+
       return <ClassesPage profile={activeProfile} />
     }
 
@@ -312,5 +328,38 @@ const styles = {
     textAlign: 'center',
     color: '#2b0a78',
     fontWeight: 'bold',
+  },
+  loadingPage: {
+    minHeight: '100vh',
+    display: 'flex',
+    flexDirection: 'column',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 12,
+    background: '#f7f1fb',
+    padding: 20,
+  },
+  loadingText: {
+    margin: 0,
+    fontSize: 18,
+    color: '#666',
+  },
+  reloadButton: {
+    padding: '12px 18px',
+    borderRadius: 12,
+    border: 'none',
+    background: '#2b0a78',
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 16,
+  },
+  resetButton: {
+    padding: '12px 18px',
+    borderRadius: 12,
+    border: 'none',
+    background: '#d91e18',
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 16,
   },
 }
