@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../supabaseClient'
 import StudentDetailPage from './StudentDetailPage'
 
@@ -22,6 +22,7 @@ export default function StudentsPage({ profile }) {
   const [editingId, setEditingId] = useState(null)
   const [form, setForm] = useState(emptyForm)
   const [message, setMessage] = useState('')
+  const formRef = useRef(null)
 
   const isAdmin = profile?.role === 'admin'
   const assistantClassId = profile?.role === 'assistant' ? profile?.class_id : null
@@ -157,6 +158,13 @@ export default function StudentsPage({ profile }) {
     setEditingId(null)
     setMessage(editingId ? 'Étudiant modifié' : 'Étudiant ajouté')
     getStudents()
+
+    setTimeout(() => {
+      formRef.current?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      })
+    }, 100)
   }
 
   function editStudent(student) {
@@ -174,12 +182,26 @@ export default function StudentsPage({ profile }) {
       signature: student.signature || '',
     })
     setMessage('')
+
+    setTimeout(() => {
+      formRef.current?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      })
+    }, 100)
   }
 
   function cancelEdit() {
     setEditingId(null)
     setForm(emptyForm)
     setMessage('')
+
+    setTimeout(() => {
+      formRef.current?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      })
+    }, 100)
   }
 
   async function deleteStudent(id) {
@@ -212,10 +234,22 @@ export default function StudentsPage({ profile }) {
 
   return (
     <div style={styles.page}>
-      <div style={styles.card}>
+      <div
+        ref={formRef}
+        style={{
+          ...styles.card,
+          ...(editingId ? styles.cardEditing : {}),
+        }}
+      >
         <h2 style={styles.title}>
-          {editingId ? 'Modifier étudiant' : 'Étudiants'}
+          {editingId ? 'Modifier cet étudiant' : 'Étudiants'}
         </h2>
+
+        {editingId && (
+          <div style={styles.editNotice}>
+            Mode modification activé
+          </div>
+        )}
 
         <form onSubmit={saveStudent}>
           <input
@@ -337,12 +371,12 @@ export default function StudentsPage({ profile }) {
         <h3 style={styles.sectionTitle}>Liste</h3>
 
         {students.length === 0 ? (
-          <p>Aucun étudiant enregistré.</p>
+          <p style={styles.emptyText}>Aucun étudiant enregistré.</p>
         ) : (
           students.map((s) => (
             <div key={s.id} style={styles.studentCard}>
               <div>
-                <strong>
+                <strong style={styles.studentName}>
                   {s.nom} {s.prenom}
                 </strong>
 
@@ -389,6 +423,7 @@ export default function StudentsPage({ profile }) {
 
               <div style={styles.row}>
                 <button
+                  type="button"
                   style={styles.viewButton}
                   onClick={() => setSelectedStudentId(s.id)}
                 >
@@ -396,6 +431,7 @@ export default function StudentsPage({ profile }) {
                 </button>
 
                 <button
+                  type="button"
                   style={styles.editButton}
                   onClick={() => editStudent(s)}
                 >
@@ -403,6 +439,7 @@ export default function StudentsPage({ profile }) {
                 </button>
 
                 <button
+                  type="button"
                   style={styles.deleteButton}
                   onClick={() => deleteStudent(s.id)}
                 >
@@ -436,6 +473,11 @@ const styles = {
     boxShadow: '0 10px 24px rgba(43, 10, 120, 0.08)',
   },
 
+  cardEditing: {
+    border: '2px solid #d4148e',
+    boxShadow: '0 12px 26px rgba(212, 20, 142, 0.14)',
+  },
+
   title: {
     marginTop: 0,
     marginBottom: 16,
@@ -454,6 +496,17 @@ const styles = {
     background: 'linear-gradient(90deg, #2b0a78 0%, #d4148e 100%)',
     WebkitBackgroundClip: 'text',
     color: 'transparent',
+  },
+
+  editNotice: {
+    marginBottom: 14,
+    padding: 12,
+    borderRadius: 12,
+    background: '#fff7fc',
+    border: '2px solid #f0cde5',
+    color: '#d4148e',
+    fontWeight: 'bold',
+    textAlign: 'center',
   },
 
   input: {
@@ -514,6 +567,15 @@ const styles = {
     border: '2px solid #f0e6ff',
   },
 
+  studentName: {
+    display: 'block',
+    textAlign: 'center',
+    color: '#2b0a78',
+    fontSize: 22,
+    fontWeight: 'bold',
+    marginBottom: 10,
+  },
+
   row: {
     display: 'flex',
     gap: 12,
@@ -524,40 +586,40 @@ const styles = {
   viewButton: {
     flex: 1,
     minWidth: 100,
-    padding: 12,
-    borderRadius: 14,
+    padding: 14,
+    borderRadius: 16,
     border: 'none',
-    background: '#1565c0',
+    background: 'linear-gradient(180deg, #2d7be5 0%, #1565c0 100%)',
     color: '#fff',
     fontWeight: 'bold',
     fontSize: 16,
-    boxShadow: '0 6px 14px rgba(21, 101, 192, 0.22)',
+    boxShadow: '0 8px 18px rgba(21, 101, 192, 0.28)',
   },
 
   editButton: {
     flex: 1,
     minWidth: 110,
-    padding: 12,
-    borderRadius: 14,
+    padding: 14,
+    borderRadius: 16,
     border: 'none',
-    background: '#444',
+    background: 'linear-gradient(180deg, #5c5c5c 0%, #3f3f3f 100%)',
     color: '#fff',
     fontWeight: 'bold',
     fontSize: 16,
-    boxShadow: '0 6px 14px rgba(68, 68, 68, 0.2)',
+    boxShadow: '0 8px 18px rgba(68, 68, 68, 0.25)',
   },
 
   deleteButton: {
     flex: 1,
     minWidth: 120,
-    padding: 12,
-    borderRadius: 14,
+    padding: 14,
+    borderRadius: 16,
     border: 'none',
-    background: '#d32f2f',
+    background: 'linear-gradient(180deg, #e53935 0%, #c62828 100%)',
     color: '#fff',
     fontWeight: 'bold',
     fontSize: 16,
-    boxShadow: '0 6px 14px rgba(211, 47, 47, 0.2)',
+    boxShadow: '0 8px 18px rgba(198, 40, 40, 0.25)',
   },
 
   meta: {
@@ -575,5 +637,10 @@ const styles = {
     color: '#d4148e',
     textAlign: 'center',
     fontSize: 16,
+  },
+
+  emptyText: {
+    textAlign: 'center',
+    color: '#555',
   },
 }
