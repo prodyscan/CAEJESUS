@@ -7,13 +7,14 @@ export default function LoginPage({ onOpenRegisterAssistant }) {
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
 
+// Commentaire
   async function handleLogin(e) {
     e.preventDefault()
     setMessage('')
     setLoading(true)
 
     const { error } = await supabase.auth.signInWithPassword({
-      email,
+      email: email.trim(),
       password,
     })
 
@@ -21,13 +22,12 @@ export default function LoginPage({ onOpenRegisterAssistant }) {
 
     if (error) {
       console.log(error)
-      setMessage(error.message)
+      setMessage("Email ou mot de passe incorrect")
       return
     }
 
     setMessage('Connexion réussie')
   }
-
   return (
     <div style={styles.page}>
       <div style={styles.card}>

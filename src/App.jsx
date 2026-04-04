@@ -80,8 +80,7 @@ export default function App() {
             setAuthError('')
           } else {
             setProfile(null)
-            setSession(null)
-            setAuthError("Profil introuvable pour cet utilisateur.")
+            setAuthError('Profil introuvable pour cet utilisateur.')
           }
         } else {
           setProfile(null)
@@ -93,7 +92,7 @@ export default function App() {
 
         setSession(null)
         setProfile(null)
-        setAuthError("Impossible de charger la session.")
+        setAuthError('Impossible de charger la session.')
       } finally {
         if (active) {
           setLoadingAuth(false)
@@ -126,8 +125,7 @@ export default function App() {
             setAuthError('')
           } else {
             setProfile(null)
-            setSession(null)
-            setAuthError("Profil introuvable pour cet utilisateur.")
+            setAuthError('Profil introuvable pour cet utilisateur.')
           }
         } else {
           setProfile(null)
@@ -139,7 +137,7 @@ export default function App() {
 
         setSession(null)
         setProfile(null)
-        setAuthError("Session indisponible pour le moment.")
+        setAuthError('Session indisponible pour le moment.')
       } finally {
         if (active) {
           setLoadingAuth(false)
@@ -255,6 +253,33 @@ export default function App() {
       <LoginPage
         onOpenRegisterAssistant={() => setAuthPage('assistant-login')}
       />
+    )
+  }
+
+  if (session && !profile) {
+    return (
+      <div style={styles.loadingPage}>
+        <div style={styles.loadingBox}>
+          <p style={styles.loadingText}>Chargement profil...</p>
+          {authError ? <p style={styles.errorText}>{authError}</p> : null}
+
+          <button
+            type="button"
+            style={styles.reloadButton}
+            onClick={() => window.location.reload()}
+          >
+            Actualiser
+          </button>
+
+          <button
+            type="button"
+            style={styles.resetButton}
+            onClick={resetSession}
+          >
+            Réinitialiser session
+          </button>
+        </div>
+      </div>
     )
   }
 
@@ -393,6 +418,19 @@ const styles = {
     borderRadius: 18,
     border: 'none',
     background: '#2b0a78',
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  resetButton: {
+    display: 'block',
+    width: '100%',
+    maxWidth: 260,
+    margin: '0 auto',
+    padding: 14,
+    borderRadius: 18,
+    border: 'none',
+    background: '#d91e18',
     color: '#fff',
     fontSize: 16,
     fontWeight: 'bold',
