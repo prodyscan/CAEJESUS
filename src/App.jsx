@@ -14,6 +14,15 @@ import PortalPage from './pages/PortalPage'
 import LoginPage from './pages/LoginPage'
 import MainMenu from './components/MainMenu'
 
+function withTimeout(promise, ms = 7000) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Timeout exceeded')), ms)
+    ),
+  ])
+}
+
 export default function App() {
   const [entered, setEntered] = useState(false)
   const [page, setPage] = useState('home')
@@ -27,14 +36,68 @@ export default function App() {
   useEffect(() => {
     let active = true
 
-    const savedAssistantSession = localStorage.getItem('assistant_session')
-    if (savedAssistantSession) {
-      try {
+    try {
+      const savedAssistantSession = localStorage.getItem('assistant_session')
+      if (savedAssistantSession) {
         const parsed = JSON.parse(savedAssistantSession)
         setAssistantSession(parsed)
+      }
+    } catch (error) {
+      console.log(error)
+      localStorage.removeItem('assistant_session')
+    }
+
+    async function initAuth() {
+      try {
+        setLoadingAuth(true)
+        setAuthError('')
+
+        const { data, error } = await withTimeout(
+          supabase.auth.getSession(),
+          7000
+        )
+
+        if (error) {
+          console.log(error)
+        }
+
+        const currentSession = data?.session || null
+
+        if (!active) return
+
+        setSession(currentSession)
+
+        if (currentSession?.user?.id) {
+          const loadedProfile = await withTimeout(
+            fetchProfile(currentSession.user.id),
+            7000
+          )
+
+          if (!active) return
+
+          if (loadedProfile) {
+            setProfile(loadedProfile)
+            setAuthError('')
+          } else {
+            setProfile(null)
+            setSession(null)
+            setAuthError("Profil introuvable pour cet utilisateur.")
+          }
+        } else {
+          setProfile(null)
+        }
       } catch (error) {
-        console.log(error)
-        localStorage.removeItem('assistant_session')
+        console.log('initAuth error:', error)
+
+        if (!active) return
+
+        setSession(null)
+        setProfile(null)
+        setAuthError("Impossible de charger la session.")
+      } finally {
+        if (active) {
+          setLoadingAuth(false)
+        }
       }
     }
 
@@ -43,29 +106,44 @@ export default function App() {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (_event, newSession) => {
-      if (!active) return
+      try {
+        if (!active) return
 
-      setLoadingAuth(true)
-      setAuthError('')
-      setSession(newSession || null)
+        setLoadingAuth(true)
+        setAuthError('')
+        setSession(newSession || null)
 
-      if (newSession?.user?.id) {
-        const loadedProfile = await fetchProfile(newSession.user.id)
+        if (newSession?.user?.id) {
+          const loadedProfile = await withTimeout(
+            fetchProfile(newSession.user.id),
+            7000
+          )
+
+          if (!active) return
+
+          if (loadedProfile) {
+            setProfile(loadedProfile)
+            setAuthError('')
+          } else {
+            setProfile(null)
+            setSession(null)
+            setAuthError("Profil introuvable pour cet utilisateur.")
+          }
+        } else {
+          setProfile(null)
+        }
+      } catch (error) {
+        console.log('onAuthStateChange error:', error)
 
         if (!active) return
 
-        if (loadedProfile) {
-          setProfile(loadedProfile)
-        } else {
-          setProfile(null)
-          setAuthError("Profil introuvable pour cet utilisateur.")
-        }
-      } else {
+        setSession(null)
         setProfile(null)
-      }
-
-      if (active) {
-        setLoadingAuth(false)
+        setAuthError("Session indisponible pour le moment.")
+      } finally {
+        if (active) {
+          setLoadingAuth(false)
+        }
       }
     })
 
@@ -75,64 +153,26 @@ export default function App() {
     }
   }, [])
 
-  async function initAuth() {
-    try {
-      setLoadingAuth(true)
-      setAuthError('')
-
-      const { data, error } = await supabase.auth.getSession()
-
-      if (error) {
-        console.log(error)
-        setAuthError("Impossible de vérifier la session pour le moment.")
-        setSession(null)
-        setProfile(null)
-        setLoadingAuth(false)
-        return
-      }
-
-      const currentSession = data?.session || null
-      setSession(currentSession)
-
-      if (currentSession?.user?.id) {
-        const loadedProfile = await fetchProfile(currentSession.user.id)
-
-        if (loadedProfile) {
-          setProfile(loadedProfile)
-        } else {
-          setProfile(null)
-          setAuthError("Profil introuvable pour cet utilisateur.")
-        }
-      } else {
-        setProfile(null)
-      }
-
-      setLoadingAuth(false)
-    } catch (error) {
-      console.log(error)
-      setAuthError("Erreur de chargement de session.")
-      setSession(null)
-      setProfile(null)
-      setLoadingAuth(false)
-    }
-  }
-
   async function fetchProfile(userId) {
     try {
+      console.log('fetchProfile userId =', userId)
+
       const { data, error } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', userId)
         .maybeSingle()
 
+      console.log('fetchProfile data =', data)
+      console.log('fetchProfile error =', error)
+
       if (error) {
-        console.log(error)
         return null
       }
 
       return data || null
     } catch (error) {
-      console.log(error)
+      console.log('fetchProfile crash =', error)
       return null
     }
   }
@@ -152,7 +192,6 @@ export default function App() {
     setLoadingAuth(false)
     setPage('home')
     setAuthPage('login')
-    window.location.reload()
   }
 
   async function logout() {
@@ -179,8 +218,7 @@ export default function App() {
     return (
       <div style={styles.loadingPage}>
         <div style={styles.loadingBox}>
-          <p style={styles.loadingText}>Chargement profil...</p>
-
+          <p style={styles.loadingText}>Chargement...</p>
           {authError ? <p style={styles.errorText}>{authError}</p> : null}
 
           <button
@@ -189,14 +227,6 @@ export default function App() {
             onClick={() => window.location.reload()}
           >
             Actualiser
-          </button>
-
-          <button
-            type="button"
-            style={styles.resetButton}
-            onClick={resetSession}
-          >
-            Réinitialiser session
           </button>
         </div>
       </div>
@@ -211,6 +241,7 @@ export default function App() {
       return (
         <AssistantLoginPage
           onLoginSuccess={(assistantData) => {
+            localStorage.setItem('assistant_session', JSON.stringify(assistantData))
             setAssistantSession(assistantData)
             setAuthPage('login')
             setPage('home')
@@ -224,34 +255,6 @@ export default function App() {
       <LoginPage
         onOpenRegisterAssistant={() => setAuthPage('assistant-login')}
       />
-    )
-  }
-
-  if (session && !profile) {
-    return (
-      <div style={styles.loadingPage}>
-        <div style={styles.loadingBox}>
-          <p style={styles.loadingText}>Chargement profil...</p>
-
-          {authError ? <p style={styles.errorText}>{authError}</p> : null}
-
-          <button
-            type="button"
-            style={styles.reloadButton}
-            onClick={initAuth}
-          >
-            Actualiser
-          </button>
-
-          <button
-            type="button"
-            style={styles.resetButton}
-            onClick={resetSession}
-          >
-            Réinitialiser session
-          </button>
-        </div>
-      </div>
     )
   }
 
@@ -392,19 +395,6 @@ const styles = {
     background: '#2b0a78',
     color: '#fff',
     fontSize: 16,
-    fontWeight: 'bold',
-  },
-  resetButton: {
-    display: 'block',
-    width: '100%',
-    maxWidth: 340,
-    margin: '0 auto',
-    padding: 16,
-    borderRadius: 18,
-    border: 'none',
-    background: '#e51612',
-    color: '#fff',
-    fontSize: 18,
     fontWeight: 'bold',
   },
 }
