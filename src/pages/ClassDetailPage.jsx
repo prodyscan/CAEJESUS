@@ -4,10 +4,9 @@ import SeanceDetailPage from './SeanceDetailPage'
 
 export default function ClassDetailPage({ classId, onBack }) {
   const [classe, setClasse] = useState(null)
-  const [students, setStudents] = useState([])
   const [seances, setSeances] = useState([])
-  const [rapports, setRapports] = useState([])
   const [selectedSeanceId, setSelectedSeanceId] = useState(null)
+  const [searchSeance, setSearchSeance] = useState('')
   const [message, setMessage] = useState('')
 
   useEffect(() => {
@@ -31,19 +30,6 @@ export default function ClassDetailPage({ classId, onBack }) {
 
     setClasse(classeData)
 
-    const { data: studentsData, error: studentsError } = await supabase
-      .from('students')
-      .select('*')
-      .eq('class_id', classId)
-      .order('nom', { ascending: true })
-
-    if (studentsError) {
-      console.log(studentsError)
-      setMessage('Erreur chargement fidèles')
-    } else {
-      setStudents(studentsData || [])
-    }
-
     const { data: seancesData, error: seancesError } = await supabase
       .from('seances')
       .select('*')
@@ -53,30 +39,29 @@ export default function ClassDetailPage({ classId, onBack }) {
     if (seancesError) {
       console.log(seancesError)
       setMessage('Erreur chargement séances')
-    } else {
-      setSeances(seancesData || [])
+      return
     }
 
-    const { data: rapportsData, error: rapportsError } = await supabase
-      .from('rapports_seance')
-      .select('*')
-      .eq('class_id', classId)
-
-    if (rapportsError) {
-      console.log(rapportsError)
-      setMessage('Erreur chargement rapports')
-    } else {
-      setRapports(rapportsData || [])
-    }
+    setSeances(seancesData || [])
   }
 
-  const rapportMap = useMemo(() => {
-    const map = {}
-    ;(rapports || []).forEach((r) => {
-      map[r.seance_id] = r
+  const filteredSeances = useMemo(() => {
+    const term = searchSeance.trim().toLowerCase()
+
+    if (!term) return seances
+
+    return seances.filter((seance) => {
+      const text = [
+        seance.chapitre || '',
+        String(seance.numero_seance || ''),
+        seance.date_seance || '',
+      ]
+        .join(' ')
+        .toLowerCase()
+
+      return text.includes(term)
     })
-    return map
-  }, [rapports])
+  }, [seances, searchSeance])
 
   if (selectedSeanceId) {
     return (
@@ -103,98 +88,47 @@ export default function ClassDetailPage({ classId, onBack }) {
         <p style={styles.meta}><strong>Pays :</strong> {classe?.pays || '-'}</p>
         <p style={styles.meta}><strong>Ville :</strong> {classe?.ville || '-'}</p>
         <p style={styles.meta}><strong>Assistant :</strong> {classe?.assistant_nom || '-'}</p>
-        <p style={styles.meta}><strong>Code assistant :</strong> {classe?.assistant_code || '-'}</p>
-        <p style={styles.meta}><strong>Mot de passe assistant :</strong> {classe?.assistant_password || '-'}</p>
 
         {message ? <p style={styles.message}>{message}</p> : null}
       </div>
 
       <div style={styles.card}>
-        <h3 style={styles.sectionTitle}>Résumé</h3>
-
-        <div style={styles.grid}>
-          <div style={styles.box}>
-            <strong>{students.length}</strong>
-            <span>Fidèles</span>
-          </div>
-
-          <div style={styles.box}>
-            <strong>{seances.length}</strong>
-            <span>Séances</span>
-          </div>
-
-          <div style={styles.box}>
-            <strong>{rapports.length}</strong>
-            <span>Rapports</span>
-          </div>
-        </div>
-      </div>
-
-      <div style={styles.card}>
-        <h3 style={styles.sectionTitle}>Fidèles de la classe</h3>
-
-        {students.length === 0 ? (
-          <p>Aucun fidèle dans cette classe.</p>
-        ) : (
-          students.map((student) => (
-            <div key={student.id} style={styles.itemCard}>
-              <strong style={styles.itemTitle}>
-                {student.nom} {student.prenom}
-              </strong>
-
-              <p style={styles.meta}>Matricule : {student.matricule || '-'}</p>
-              <p style={styles.meta}>Sexe : {student.sexe || '-'}</p>
-              <p style={styles.meta}>Ministère : {student.ministere || '-'}</p>
-              <p style={styles.meta}>Profession : {student.profession || '-'}</p>
-              <p style={styles.meta}>Dénomination : {student.denomination || '-'}</p>
-              <p style={styles.meta}>Quartier : {student.quartier || '-'}</p>
-            </div>
-          ))
-        )}
-      </div>
-
-      <div style={styles.card}>
         <h3 style={styles.sectionTitle}>Séances de la classe</h3>
 
-        {seances.length === 0 ? (
-          <p>Aucune séance pour cette classe.</p>
+        <input
+          style={styles.input}
+          placeholder="Chercher une séance par chapitre, numéro ou date..."
+          value={searchSeance}
+          onChange={(e) => setSearchSeance(e.target.value)}
+        />
+
+        <p style={styles.resultText}>
+          {filteredSeances.length} séance{filteredSeances.length > 1 ? 's' : ''}
+        </p>
+
+        {filteredSeances.length === 0 ? (
+          <p>Aucune séance trouvée.</p>
         ) : (
-          seances.map((seance) => {
-            const rapport = rapportMap[seance.id]
+          filteredSeances.map((seance) => (
+            <div key={seance.id} style={styles.itemCard}>
+              <strong style={styles.itemTitle}>
+                {seance.chapitre || '-'}
+              </strong>
 
-            return (
-              <div key={seance.id} style={styles.itemCard}>
-                <strong style={styles.itemTitle}>
-                  {seance.chapitre || '-'}
-                </strong>
+              <p style={styles.meta}>Numéro : {seance.numero_seance || '-'}</p>
+              <p style={styles.meta}>Date : {seance.date_seance || '-'}</p>
 
-                <p style={styles.meta}>Numéro : {seance.numero_seance || '-'}</p>
-                <p style={styles.meta}>Date : {seance.date_seance || '-'}</p>
-                <p style={styles.meta}>Rapport : {rapport ? 'Disponible' : 'Non disponible'}</p>
-
-                <div style={styles.row}>
-                  <button
-                    type="button"
-                    style={styles.openButton}
-                    onClick={() => setSelectedSeanceId(seance.id)}
-                  >
-                    Ouvrir séance
-                  </button>
-                </div>
-
-                {rapport && (
-                  <div style={styles.rapportBox}>
-                    <p style={styles.meta}>
-                      <strong>Rapport :</strong> {rapport.rapport || '-'}
-                    </p>
-                    <p style={styles.meta}>
-                      <strong>Témoignage :</strong> {rapport.temoignage || '-'}
-                    </p>
-                  </div>
-                )}
+              <div style={styles.row}>
+                <button
+                  type="button"
+                  style={styles.openButton}
+                  onClick={() => setSelectedSeanceId(seance.id)}
+                >
+                  Ouvrir séance
+                </button>
               </div>
-            )
-          })
+            </div>
+          ))
         )}
       </div>
     </div>
@@ -242,22 +176,22 @@ const styles = {
     textAlign: 'center',
     fontSize: 24,
   },
-  grid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
-    gap: 10,
+  input: {
     width: '100%',
-  },
-  box: {
-    background: '#fbf8ff',
-    border: '1px solid #eadcf9',
-    borderRadius: 14,
     padding: 14,
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 4,
+    marginBottom: 12,
+    borderRadius: 12,
+    border: '2px solid #d8c8ef',
+    fontSize: 16,
+    boxSizing: 'border-box',
+    background: '#fff',
+  },
+  resultText: {
+    marginTop: 4,
+    marginBottom: 12,
     textAlign: 'center',
-    color: '#2b0a78',
+    color: '#6f5b84',
+    fontWeight: 'bold',
   },
   itemCard: {
     border: '1px solid #eadcf9',
@@ -290,13 +224,6 @@ const styles = {
     color: '#fff',
     fontWeight: 'bold',
     fontSize: 15,
-  },
-  rapportBox: {
-    marginTop: 12,
-    padding: 12,
-    borderRadius: 12,
-    background: '#fff7fc',
-    border: '1px solid #f0cde5',
   },
   message: {
     marginTop: 14,

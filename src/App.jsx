@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from './supabaseClient'
+import ErrorBoundary from './ErrorBoundary'
 
 import HomePage from './pages/HomePage'
 import ClassesPage from './pages/ClassesPage'
@@ -36,13 +37,11 @@ export default function App() {
     let active = true
 
     try {
-      const savedAssistantSession = localStorage.getItem('assistant_session')
-      if (savedAssistantSession) {
-        const parsed = JSON.parse(savedAssistantSession)
-        setAssistantSession(parsed)
+      const saved = localStorage.getItem('assistant_session')
+      if (saved) {
+        setAssistantSession(JSON.parse(saved))
       }
-    } catch (error) {
-      console.log('assistant_session error:', error)
+    } catch (e) {
       localStorage.removeItem('assistant_session')
     }
 
@@ -50,14 +49,10 @@ export default function App() {
       try {
         setLoadingAuth(true)
 
-        const { data, error } = await withTimeout(
+        const { data } = await withTimeout(
           supabase.auth.getSession(),
           6000
         )
-
-        if (error) {
-          console.log('getSession error:', error)
-        }
 
         const currentSession = data?.session || null
 
@@ -66,27 +61,19 @@ export default function App() {
         setSession(currentSession)
 
         if (currentSession?.user?.id) {
-          const loadedProfile = await withTimeout(
-            fetchProfile(currentSession.user.id),
-            6000
-          )
-
+          const loadedProfile = await fetchProfile(currentSession.user.id)
           if (!active) return
           setProfile(loadedProfile)
         } else {
           setProfile(null)
         }
       } catch (error) {
-        console.log('initAuth timeout/crash:', error)
-
+        console.log('Auth error:', error)
         if (!active) return
-
         setSession(null)
         setProfile(null)
       } finally {
-        if (active) {
-          setLoadingAuth(false)
-        }
+        if (active) setLoadingAuth(false)
       }
     }
 
@@ -94,34 +81,24 @@ export default function App() {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event, newSession) => {
-      try {
-        if (!active) return
+    } = supabase.auth.onAuthStateChange(async (_, newSession) => {
+      if (!active) return
 
+      try {
         setLoadingAuth(true)
         setSession(newSession || null)
 
         if (newSession?.user?.id) {
-          const loadedProfile = await withTimeout(
-            fetchProfile(newSession.user.id),
-            6000
-          )
-
+          const loadedProfile = await fetchProfile(newSession.user.id)
           if (!active) return
           setProfile(loadedProfile)
         } else {
           setProfile(null)
         }
       } catch (error) {
-        console.log('onAuthStateChange timeout/crash:', error)
-
-        if (!active) return
-
-        setProfile(null)
+        console.log('Auth change error:', error)
       } finally {
-        if (active) {
-          setLoadingAuth(false)
-        }
+        if (active) setLoadingAuth(false)
       }
     })
 
@@ -133,31 +110,20 @@ export default function App() {
 
   async function fetchProfile(userId) {
     try {
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', userId)
         .maybeSingle()
 
-      if (error) {
-        console.log('fetchProfile error:', error)
-        return null
-      }
-
       return data || null
-    } catch (error) {
-      console.log('fetchProfile crash:', error)
+    } catch {
       return null
     }
   }
 
   async function logout() {
-    try {
-      await supabase.auth.signOut()
-    } catch (error) {
-      console.log('logout error:', error)
-    }
-
+    await supabase.auth.signOut()
     localStorage.removeItem('assistant_session')
     setSession(null)
     setProfile(null)
@@ -166,6 +132,10 @@ export default function App() {
     setAuthPage('login')
   }
 
+  // 🔥 CORRECTION IMPORTANTE
+  const activeProfile = session ? profile : assistantSession || null
+  const isAdmin = activeProfile?.role === 'admin'
+
   if (!entered) {
     return <PortalPage onEnter={() => setEntered(true)} />
   }
@@ -173,30 +143,21 @@ export default function App() {
   if (loadingAuth) {
     return (
       <div style={styles.loadingPage}>
-        <p style={styles.loadingText}>Chargement...</p>
-
-        <button
-          type="button"
-          onClick={() => window.location.reload()}
-          style={styles.reloadButton}
-        >
+        <p>Chargement...</p>
+        <button onClick={() => window.location.reload()}>
           Actualiser
         </button>
       </div>
     )
   }
 
-  const activeProfile = session ? profile : assistantSession
-  const isAdmin = activeProfile?.role === 'admin'
-
   if (!session && !assistantSession) {
     if (authPage === 'assistant-login') {
       return (
         <AssistantLoginPage
-          onLoginSuccess={(assistantData) => {
-            localStorage.setItem('assistant_session', JSON.stringify(assistantData))
-            setAssistantSession(assistantData)
-            setAuthPage('login')
+          onLoginSuccess={(data) => {
+            localStorage.setItem('assistant_session', JSON.stringify(data))
+            setAssistantSession(data)
             setPage('home')
           }}
           onBack={() => setAuthPage('login')}
@@ -214,104 +175,48 @@ export default function App() {
   if (session && !profile) {
     return (
       <div style={styles.loadingPage}>
-        <p style={styles.loadingText}>Chargement profil...</p>
-
-        <button
-          type="button"
-          onClick={logout}
-          style={styles.resetButton}
-        >
-          Réinitialiser session
-        </button>
+        <p>Chargement profil...</p>
+        <button onClick={logout}>Reset</button>
       </div>
     )
   }
 
   function renderPage() {
-    if (page === 'home') {
-      return (
-        <HomePage
-          onNavigate={setPage}
-          profile={activeProfile}
-          onLogout={logout}
-        />
-      )
+    switch (page) {
+      case 'home':
+        return <HomePage onNavigate={setPage} profile={activeProfile} onLogout={logout} />
+      case 'classes':
+        return isAdmin ? <ClassesPage profile={activeProfile} /> : <HomePage onNavigate={setPage} profile={activeProfile} />
+      case 'students':
+        return <StudentsPage profile={activeProfile} />
+      case 'couples':
+        return <CouplesPage profile={activeProfile} />
+      case 'seances':
+        return <SeancesPage profile={activeProfile} />
+      case 'paiements':
+        return <PaiementsPage profile={activeProfile} />
+      case 'bilans':
+        return <BilansPage profile={activeProfile} />
+      default:
+        return <HomePage onNavigate={setPage} profile={activeProfile} />
     }
-
-    if (page === 'classes') {
-      if (!isAdmin) {
-        return (
-          <HomePage
-            onNavigate={setPage}
-            profile={activeProfile}
-            onLogout={logout}
-          />
-        )
-      }
-
-      return <ClassesPage profile={activeProfile} />
-    }
-
-    if (page === 'students') {
-      return <StudentsPage profile={activeProfile} />
-    }
-
-    if (page === 'couples') {
-      return <CouplesPage profile={activeProfile} />
-    }
-
-    if (page === 'seances') {
-      return <SeancesPage profile={activeProfile} />
-    }
-
-    if (page === 'paiements') {
-      return <PaiementsPage profile={activeProfile} />
-    }
-
-    if (page === 'bilans') {
-      return <BilansPage profile={activeProfile} />
-    }
-
-    if (page === 'create-assistant') {
-      if (!isAdmin) {
-        return (
-          <HomePage
-            onNavigate={setPage}
-            profile={activeProfile}
-            onLogout={logout}
-          />
-        )
-      }
-
-      return (
-        <div style={styles.infoBox}>
-          Les assistants se connectent maintenant avec le code et le mot de passe de leur classe.
-        </div>
-      )
-    }
-
-    return (
-      <HomePage
-        onNavigate={setPage}
-        profile={activeProfile}
-        onLogout={logout}
-      />
-    )
   }
 
   return (
-    <div style={styles.app}>
-      {page !== 'home' && (
-        <MainMenu
-          currentPage={page}
-          onChangePage={setPage}
-          profile={activeProfile}
-          onLogout={logout}
-        />
-      )}
+    <ErrorBoundary>
+      <div style={styles.app}>
+        {page !== 'home' && (
+          <MainMenu
+            currentPage={page}
+            onChangePage={setPage}
+            profile={activeProfile}
+            onLogout={logout}
+          />
+        )}
 
-      <div style={styles.content}>{renderPage()}</div>
-    </div>
+        <div style={styles.content}>{renderPage()}</div>
+      </div>
+    </ErrorBoundary>
   )
 }
 
@@ -323,43 +228,12 @@ const styles = {
   content: {
     paddingBottom: 30,
   },
-  infoBox: {
-    padding: 20,
-    textAlign: 'center',
-    color: '#2b0a78',
-    fontWeight: 'bold',
-  },
   loadingPage: {
     minHeight: '100vh',
     display: 'flex',
-    flexDirection: 'column',
     justifyContent: 'center',
     alignItems: 'center',
-    gap: 12,
-    background: '#f7f1fb',
-    padding: 20,
-  },
-  loadingText: {
-    margin: 0,
-    fontSize: 18,
-    color: '#666',
-  },
-  reloadButton: {
-    padding: '12px 18px',
-    borderRadius: 12,
-    border: 'none',
-    background: '#2b0a78',
-    color: '#fff',
-    fontWeight: 'bold',
-    fontSize: 16,
-  },
-  resetButton: {
-    padding: '12px 18px',
-    borderRadius: 12,
-    border: 'none',
-    background: '#d91e18',
-    color: '#fff',
-    fontWeight: 'bold',
-    fontSize: 16,
+    flexDirection: 'column',
+    gap: 10,
   },
 }

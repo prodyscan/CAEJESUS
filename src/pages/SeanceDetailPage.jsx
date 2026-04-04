@@ -1,11 +1,14 @@
-import { useEffect, useRef, useState } from 'react'
-import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Html5Qrcode } from 'html5-qrcode'
 import { supabase } from '../supabaseClient'
+
+const INSCRIPTION_MONTANT = 10000
 
 export default function SeanceDetailPage({ seanceId, onBack }) {
   const [seance, setSeance] = useState(null)
   const [students, setStudents] = useState([])
   const [presences, setPresences] = useState({})
+  const [allPaiementsOfClass, setAllPaiementsOfClass] = useState([])
   const [rapport, setRapport] = useState('')
   const [temoignage, setTemoignage] = useState('')
   const [matriculeInput, setMatriculeInput] = useState('')
@@ -14,7 +17,6 @@ export default function SeanceDetailPage({ seanceId, onBack }) {
   const [scannerStarted, setScannerStarted] = useState(false)
   const [pointageMode, setPointageMode] = useState('matricule')
   const [editingRapport, setEditingRapport] = useState(true)
-  const [scanDebug, setScanDebug] = useState('')
 
   const qrRef = useRef(null)
   const lastScannedRef = useRef('')
@@ -62,9 +64,10 @@ export default function SeanceDetailPage({ seanceId, onBack }) {
     if (studentsError) {
       console.log(studentsError)
       setMessage('Erreur chargement étudiants')
-    } else {
-      setStudents(studentsData || [])
+      return
     }
+
+    setStudents(studentsData || [])
 
     const { data: presencesData, error: presencesError } = await supabase
       .from('presences')
@@ -74,12 +77,31 @@ export default function SeanceDetailPage({ seanceId, onBack }) {
     if (presencesError) {
       console.log(presencesError)
       setMessage('Erreur chargement pointage')
+      return
+    }
+
+    const map = {}
+    ;(presencesData || []).forEach((item) => {
+      map[item.student_id] = item.statut
+    })
+    setPresences(map)
+
+    const studentIds = (studentsData || []).map((student) => student.id)
+
+    if (studentIds.length > 0) {
+      const { data: paiementsData, error: paiementsError } = await supabase
+        .from('paiements')
+        .select('*')
+        .in('student_id', studentIds)
+
+      if (paiementsError) {
+        console.log(paiementsError)
+        setMessage('Erreur chargement paiements')
+      } else {
+        setAllPaiementsOfClass(paiementsData || [])
+      }
     } else {
-      const map = {}
-      ;(presencesData || []).forEach((item) => {
-        map[item.student_id] = item.statut
-      })
-      setPresences(map)
+      setAllPaiementsOfClass([])
     }
 
     const { data: rapportData, error: rapportError } = await supabase
@@ -99,47 +121,6 @@ export default function SeanceDetailPage({ seanceId, onBack }) {
       setTemoignage('')
       setEditingRapport(true)
     }
-  }
-
-  function normalizeText(value) {
-    return (value || '')
-      .replace(/\n/g, '')
-      .replace(/\r/g, '')
-      .replace(/\t/g, '')
-      .trim()
-      .toLowerCase()
-  }
-
-  function extractMatriculeFromQr(rawText) {
-    if (!rawText) return ''
-
-    const clean = String(rawText).trim()
-
-    // 1. Si le QR contient un JSON
-    try {
-      const parsed = JSON.parse(clean)
-      if (parsed?.matricule) {
-        return String(parsed.matricule).trim()
-      }
-    } catch (_) {}
-
-    // 2. Si le texte est de type "Matricule: SAM2020-001"
-    const match = clean.match(/matricule\s*[:=-]\s*([A-Za-z0-9_-]+)/i)
-    if (match?.[1]) {
-      return match[1].trim()
-    }
-
-    // 3. Sinon on considère que le QR contient directement le matricule
-    return clean
-  }
-
-  function findStudentByMatricule(rawCode) {
-    const matricule = extractMatriculeFromQr(rawCode)
-    const normalizedCode = normalizeText(matricule)
-
-    return students.find(
-      (s) => normalizeText(s.matricule) === normalizedCode
-    )
   }
 
   async function markPresence(studentId, statut) {
@@ -198,7 +179,9 @@ export default function SeanceDetailPage({ seanceId, onBack }) {
       return
     }
 
-    const student = findStudentByMatricule(code)
+    const student = students.find(
+      (s) => (s.matricule || '').trim().toLowerCase() === code.toLowerCase()
+    )
 
     if (!student) {
       setMessage('Aucun étudiant trouvé avec ce matricule dans cette classe')
@@ -216,64 +199,49 @@ export default function SeanceDetailPage({ seanceId, onBack }) {
     if (scannerStarted) return
 
     setMessage('')
-    setScanDebug('')
 
     try {
       if (qrRef.current) {
         try {
           await qrRef.current.stop()
-        } catch (error) {
-          console.log(error)
-        }
-
-        try {
           await qrRef.current.clear()
         } catch (error) {
           console.log(error)
         }
-
         qrRef.current = null
       }
 
-      const scanner = new Html5Qrcode('qr-reader', {
-        formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
-        verbose: false,
-      })
-
+      const scanner = new Html5Qrcode('qr-reader')
       qrRef.current = scanner
 
       await scanner.start(
-        { facingMode: { ideal: 'environment' } },
+        { facingMode: 'environment' },
         {
-          fps: 15,
-          qrbox: { width: 280, height: 280 },
+          fps: 10,
+          qrbox: { width: 250, height: 250 },
           aspectRatio: 1,
           disableFlip: false,
-          experimentalFeatures: {
-            useBarCodeDetectorIfSupported: true,
-          },
         },
         async (decodedText) => {
-          const raw = String(decodedText || '').trim()
-          const code = extractMatriculeFromQr(raw)
+          const code = (decodedText || '').trim()
           const now = Date.now()
 
-          setScanDebug(`QR lu : ${raw}`)
-
           if (
-            lastScannedRef.current === raw &&
+            lastScannedRef.current === code &&
             now - lastScannedAtRef.current < 2500
           ) {
             return
           }
 
-          lastScannedRef.current = raw
+          lastScannedRef.current = code
           lastScannedAtRef.current = now
 
-          const student = findStudentByMatricule(raw)
+          const student = students.find(
+            (s) => (s.matricule || '').trim().toLowerCase() === code.toLowerCase()
+          )
 
           if (!student) {
-            setMessage(`QR lu mais matricule non reconnu : ${code}`)
+            setMessage(`QR non reconnu : ${code}`)
             return
           }
 
@@ -281,6 +249,7 @@ export default function SeanceDetailPage({ seanceId, onBack }) {
           if (!ok) return
 
           setMessage(`Présence validée : ${student.nom} ${student.prenom}`)
+          await stopScanner()
         },
         () => {}
       )
@@ -417,6 +386,75 @@ export default function SeanceDetailPage({ seanceId, onBack }) {
     return students.length - getPresentsCount() - getAbsentsCount()
   }
 
+  function getLinkedStudentIds(studentId) {
+    const student = students.find((s) => s.id === studentId)
+
+    if (!student) return [studentId]
+    if (!student.couple_record_id) return [studentId]
+
+    return students
+      .filter((s) => s.couple_record_id === student.couple_record_id)
+      .map((s) => s.id)
+  }
+
+  function getStudentInscriptionPaid(studentId) {
+    const linkedIds = getLinkedStudentIds(studentId)
+
+    return allPaiementsOfClass
+      .filter(
+        (p) =>
+          linkedIds.includes(p.student_id) &&
+          p.type_paiement === 'inscription'
+      )
+      .reduce((sum, p) => sum + Number(p.montant || 0), 0)
+  }
+
+  function getStudentContributionPaid(studentId) {
+    const linkedIds = getLinkedStudentIds(studentId)
+
+    return allPaiementsOfClass
+      .filter(
+        (p) =>
+          linkedIds.includes(p.student_id) &&
+          p.type_paiement === 'contribution'
+      )
+      .reduce((sum, p) => sum + Number(p.montant || 0), 0)
+  }
+
+  const financialStats = useMemo(() => {
+    const inscriptionsPayees = students.filter(
+      (student) => getStudentInscriptionPaid(student.id) >= INSCRIPTION_MONTANT
+    ).length
+
+    const inscriptionsNonPayees = students.length - inscriptionsPayees
+
+    const contributionsOk = students.filter(
+      (student) =>
+        getStudentContributionPaid(student.id) > 0 ||
+        (student.contribution_avance || 0) > 0
+    ).length
+
+    const contributionsNonOk = students.length - contributionsOk
+
+    return {
+      inscriptionsPayees,
+      inscriptionsNonPayees,
+      contributionsOk,
+      contributionsNonOk,
+    }
+  }, [students, allPaiementsOfClass])
+
+  const studentsWithStatus = useMemo(() => {
+    return students.map((student) => {
+      const statut = presences[student.id] || 'non_pointe'
+
+      return {
+        ...student,
+        statut,
+      }
+    })
+  }, [students, presences])
+
   if (!seance) {
     return (
       <div style={styles.page}>
@@ -447,7 +485,6 @@ export default function SeanceDetailPage({ seanceId, onBack }) {
         </div>
 
         {message ? <p style={styles.message}>{message}</p> : null}
-        {scanDebug ? <p style={styles.debug}>{scanDebug}</p> : null}
       </div>
 
       <div style={styles.card}>
@@ -484,8 +521,7 @@ export default function SeanceDetailPage({ seanceId, onBack }) {
             <h3 style={styles.sectionTitle}>Pointage par QR</h3>
 
             <p style={styles.helpText}>
-              Le QR doit contenir le matricule exact de l’étudiant,
-              ou un JSON du type {`{"matricule":"SAM2020-001"}`}.
+              Scanne un QR affiché sur un autre téléphone ou sur une image nette.
             </p>
 
             <div id="qr-reader" style={styles.qrReader}></div>
@@ -581,7 +617,7 @@ export default function SeanceDetailPage({ seanceId, onBack }) {
         <div style={styles.resumeGrid}>
           <div style={styles.resumeBox}>
             <strong>{students.length}</strong>
-            <span>Étudiants</span>
+            <span>Fidèles</span>
           </div>
 
           <div style={styles.resumeBox}>
@@ -599,6 +635,67 @@ export default function SeanceDetailPage({ seanceId, onBack }) {
             <span>Non pointés</span>
           </div>
         </div>
+      </div>
+
+      <div style={styles.card}>
+        <h3 style={styles.sectionTitle}>Bilan financier</h3>
+
+        <div style={styles.resumeGrid}>
+          <div style={styles.resumeBox}>
+            <strong>{financialStats.inscriptionsPayees}</strong>
+            <span>Inscriptions payées</span>
+          </div>
+
+          <div style={styles.resumeBox}>
+            <strong>{financialStats.inscriptionsNonPayees}</strong>
+            <span>Inscriptions non payées</span>
+          </div>
+
+          <div style={styles.resumeBox}>
+            <strong>{financialStats.contributionsOk}</strong>
+            <span>Contributions à jour</span>
+          </div>
+
+          <div style={styles.resumeBox}>
+            <strong>{financialStats.contributionsNonOk}</strong>
+            <span>Contributions non à jour</span>
+          </div>
+        </div>
+      </div>
+
+      <div style={styles.card}>
+        <h3 style={styles.sectionTitle}>Fidèles de la séance</h3>
+
+        {studentsWithStatus.length === 0 ? (
+          <p>Aucun fidèle lié à cette classe.</p>
+        ) : (
+          studentsWithStatus.map((student) => (
+            <div key={student.id} style={styles.studentCard}>
+              <strong style={styles.studentName}>
+                {student.nom} {student.prenom}
+              </strong>
+
+              <p style={styles.meta}>Matricule : {student.matricule || '-'}</p>
+
+              <p style={styles.meta}>
+                Statut :{' '}
+                {student.statut === 'present'
+                  ? 'Présent'
+                  : student.statut === 'absent'
+                  ? 'Absent'
+                  : 'Non pointé'}
+              </p>
+
+              <p style={styles.meta}>
+                Inscription : {getStudentInscriptionPaid(student.id) >= INSCRIPTION_MONTANT ? 'Payée' : 'Non payée'}
+              </p>
+
+              <p style={styles.meta}>
+                Contribution : {getStudentContributionPaid(student.id) > 0 || (student.contribution_avance || 0) > 0 ? 'À jour' : 'Non à jour'}
+              </p>
+            </div>
+          ))
+        )}
       </div>
 
       <div style={styles.card}>
@@ -758,14 +855,6 @@ const styles = {
     wordBreak: 'break-word',
   },
 
-  debug: {
-    marginTop: 10,
-    color: '#555',
-    textAlign: 'center',
-    fontSize: 13,
-    wordBreak: 'break-word',
-  },
-
   pointageTitle: {
     marginTop: 0,
     marginBottom: 14,
@@ -846,11 +935,8 @@ const styles = {
 
   qrReader: {
     width: '100%',
-    minHeight: 320,
     marginBottom: 12,
     overflow: 'hidden',
-    borderRadius: 16,
-    background: '#000',
   },
 
   studentCard: {
