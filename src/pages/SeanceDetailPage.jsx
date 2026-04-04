@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Html5Qrcode } from 'html5-qrcode'
+import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode'
 import { supabase } from '../supabaseClient'
 
 export default function SeanceDetailPage({ seanceId, onBack }) {
@@ -14,6 +14,7 @@ export default function SeanceDetailPage({ seanceId, onBack }) {
   const [scannerStarted, setScannerStarted] = useState(false)
   const [pointageMode, setPointageMode] = useState('matricule')
   const [editingRapport, setEditingRapport] = useState(true)
+  const [scanDebug, setScanDebug] = useState('')
 
   const qrRef = useRef(null)
   const lastScannedRef = useRef('')
@@ -100,6 +101,47 @@ export default function SeanceDetailPage({ seanceId, onBack }) {
     }
   }
 
+  function normalizeText(value) {
+    return (value || '')
+      .replace(/\n/g, '')
+      .replace(/\r/g, '')
+      .replace(/\t/g, '')
+      .trim()
+      .toLowerCase()
+  }
+
+  function extractMatriculeFromQr(rawText) {
+    if (!rawText) return ''
+
+    const clean = String(rawText).trim()
+
+    // 1. Si le QR contient un JSON
+    try {
+      const parsed = JSON.parse(clean)
+      if (parsed?.matricule) {
+        return String(parsed.matricule).trim()
+      }
+    } catch (_) {}
+
+    // 2. Si le texte est de type "Matricule: SAM2020-001"
+    const match = clean.match(/matricule\s*[:=-]\s*([A-Za-z0-9_-]+)/i)
+    if (match?.[1]) {
+      return match[1].trim()
+    }
+
+    // 3. Sinon on considère que le QR contient directement le matricule
+    return clean
+  }
+
+  function findStudentByMatricule(rawCode) {
+    const matricule = extractMatriculeFromQr(rawCode)
+    const normalizedCode = normalizeText(matricule)
+
+    return students.find(
+      (s) => normalizeText(s.matricule) === normalizedCode
+    )
+  }
+
   async function markPresence(studentId, statut) {
     setMessage('')
 
@@ -156,9 +198,7 @@ export default function SeanceDetailPage({ seanceId, onBack }) {
       return
     }
 
-    const student = students.find(
-      (s) => (s.matricule || '').trim().toLowerCase() === code.toLowerCase()
-    )
+    const student = findStudentByMatricule(code)
 
     if (!student) {
       setMessage('Aucun étudiant trouvé avec ce matricule dans cette classe')
@@ -176,49 +216,64 @@ export default function SeanceDetailPage({ seanceId, onBack }) {
     if (scannerStarted) return
 
     setMessage('')
+    setScanDebug('')
 
     try {
       if (qrRef.current) {
         try {
           await qrRef.current.stop()
+        } catch (error) {
+          console.log(error)
+        }
+
+        try {
           await qrRef.current.clear()
         } catch (error) {
           console.log(error)
         }
+
         qrRef.current = null
       }
 
-      const scanner = new Html5Qrcode('qr-reader')
+      const scanner = new Html5Qrcode('qr-reader', {
+        formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
+        verbose: false,
+      })
+
       qrRef.current = scanner
 
       await scanner.start(
-        { facingMode: 'environment' },
+        { facingMode: { ideal: 'environment' } },
         {
-          fps: 6,
-          qrbox: { width: 300, height: 300 },
+          fps: 15,
+          qrbox: { width: 280, height: 280 },
           aspectRatio: 1,
           disableFlip: false,
+          experimentalFeatures: {
+            useBarCodeDetectorIfSupported: true,
+          },
         },
         async (decodedText) => {
-          const code = (decodedText || '').trim()
+          const raw = String(decodedText || '').trim()
+          const code = extractMatriculeFromQr(raw)
           const now = Date.now()
 
+          setScanDebug(`QR lu : ${raw}`)
+
           if (
-            lastScannedRef.current === code &&
+            lastScannedRef.current === raw &&
             now - lastScannedAtRef.current < 2500
           ) {
             return
           }
 
-          lastScannedRef.current = code
+          lastScannedRef.current = raw
           lastScannedAtRef.current = now
 
-          const student = students.find(
-            (s) => (s.matricule || '').trim().toLowerCase() === code.toLowerCase()
-          )
+          const student = findStudentByMatricule(raw)
 
           if (!student) {
-            setMessage(`QR non reconnu : ${code}`)
+            setMessage(`QR lu mais matricule non reconnu : ${code}`)
             return
           }
 
@@ -392,6 +447,7 @@ export default function SeanceDetailPage({ seanceId, onBack }) {
         </div>
 
         {message ? <p style={styles.message}>{message}</p> : null}
+        {scanDebug ? <p style={styles.debug}>{scanDebug}</p> : null}
       </div>
 
       <div style={styles.card}>
@@ -428,7 +484,8 @@ export default function SeanceDetailPage({ seanceId, onBack }) {
             <h3 style={styles.sectionTitle}>Pointage par QR</h3>
 
             <p style={styles.helpText}>
-              Scanne un QR affiché sur un autre téléphone ou sur une image nette.
+              Le QR doit contenir le matricule exact de l’étudiant,
+              ou un JSON du type {`{"matricule":"SAM2020-001"}`}.
             </p>
 
             <div id="qr-reader" style={styles.qrReader}></div>
@@ -701,6 +758,14 @@ const styles = {
     wordBreak: 'break-word',
   },
 
+  debug: {
+    marginTop: 10,
+    color: '#555',
+    textAlign: 'center',
+    fontSize: 13,
+    wordBreak: 'break-word',
+  },
+
   pointageTitle: {
     marginTop: 0,
     marginBottom: 14,
@@ -781,8 +846,11 @@ const styles = {
 
   qrReader: {
     width: '100%',
+    minHeight: 320,
     marginBottom: 12,
     overflow: 'hidden',
+    borderRadius: 16,
+    background: '#000',
   },
 
   studentCard: {
