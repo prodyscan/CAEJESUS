@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../supabaseClient'
+import ClassDetailPage from './ClassDetailPage'
 
 const emptyClassForm = {
   nom: '',
@@ -15,6 +16,7 @@ export default function ClassesPage() {
   const [classes, setClasses] = useState([])
   const [form, setForm] = useState(emptyClassForm)
   const [editingId, setEditingId] = useState(null)
+  const [selectedClassId, setSelectedClassId] = useState(null)
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
   const [search, setSearch] = useState('')
@@ -58,7 +60,7 @@ export default function ClassesPage() {
     }
 
     if (!form.assistant_password.trim()) {
-      setMessage("Le mot de passe assistant est obligatoire")
+      setMessage('Le mot de passe assistant est obligatoire')
       return
     }
 
@@ -123,6 +125,7 @@ export default function ClassesPage() {
       assistant_password: classe.assistant_password || '',
     })
     setMessage('')
+    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   function cancelEdit() {
@@ -171,6 +174,18 @@ export default function ClassesPage() {
       return text.includes(term)
     })
   }, [classes, search])
+
+  if (selectedClassId) {
+    return (
+      <ClassDetailPage
+        classId={selectedClassId}
+        onBack={() => {
+          setSelectedClassId(null)
+          getClasses()
+        }}
+      />
+    )
+  }
 
   return (
     <div style={styles.page}>
@@ -295,6 +310,14 @@ export default function ClassesPage() {
               <div style={styles.row}>
                 <button
                   type="button"
+                  style={styles.viewButton}
+                  onClick={() => setSelectedClassId(classe.id)}
+                >
+                  Voir
+                </button>
+
+                <button
+                  type="button"
                   style={styles.primaryButton}
                   onClick={() => editClass(classe)}
                 >
@@ -387,6 +410,16 @@ const styles = {
     gap: 10,
     marginTop: 12,
     flexWrap: 'wrap',
+  },
+  viewButton: {
+    padding: '10px 14px',
+    borderRadius: 10,
+    border: 'none',
+    background: '#1565c0',
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: 'bold',
+    flex: 1,
   },
   primaryButton: {
     padding: '10px 14px',
