@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import { supabase } from './supabaseClient'
-import ErrorBoundary from './ErrorBoundary'
 
 import HomePage from './pages/HomePage'
 import ClassesPage from './pages/ClassesPage'
@@ -15,15 +14,6 @@ import PortalPage from './pages/PortalPage'
 import LoginPage from './pages/LoginPage'
 import MainMenu from './components/MainMenu'
 
-function withTimeout(promise, ms = 10000) {
-  return Promise.race([
-    promise,
-    new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Timeout exceeded')), ms)
-    ),
-  ])
-}
-
 export default function App() {
   const [entered, setEntered] = useState(false)
   const [page, setPage] = useState('home')
@@ -37,46 +27,14 @@ export default function App() {
   useEffect(() => {
     let active = true
 
-    try {
-      const savedAssistantSession = localStorage.getItem('assistant_session')
-      if (savedAssistantSession) {
+    const savedAssistantSession = localStorage.getItem('assistant_session')
+    if (savedAssistantSession) {
+      try {
         const parsed = JSON.parse(savedAssistantSession)
         setAssistantSession(parsed)
-      }
-    } catch (error) {
-      console.log('assistant_session error:', error)
-      localStorage.removeItem('assistant_session')
-    }
-
-    async function initAuth() {
-      try {
-        setLoadingAuth(true)
-        setAuthError('')
-
-        const result = await withTimeout(supabase.auth.getSession(), 10000)
-        const currentSession = result?.data?.session || null
-
-        if (!active) return
-
-        setSession(currentSession)
-
-        if (currentSession?.user?.id) {
-          const loadedProfile = await fetchProfile(currentSession.user.id)
-          if (!active) return
-          setProfile(loadedProfile)
-        } else {
-          setProfile(null)
-        }
       } catch (error) {
-        console.log('initAuth error:', error)
-
-        if (!active) return
-
-        setAuthError('Impossible de vérifier la session pour le moment.')
-      } finally {
-        if (active) {
-          setLoadingAuth(false)
-        }
+        console.log(error)
+        localStorage.removeItem('assistant_session')
       }
     }
 
@@ -84,28 +42,30 @@ export default function App() {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_, newSession) => {
+    } = supabase.auth.onAuthStateChange(async (_event, newSession) => {
       if (!active) return
 
-      try {
-        setAuthError('')
-        setSession(newSession || null)
+      setLoadingAuth(true)
+      setAuthError('')
+      setSession(newSession || null)
 
-        if (newSession?.user?.id) {
-          const loadedProfile = await fetchProfile(newSession.user.id)
-          if (!active) return
+      if (newSession?.user?.id) {
+        const loadedProfile = await fetchProfile(newSession.user.id)
+
+        if (!active) return
+
+        if (loadedProfile) {
           setProfile(loadedProfile)
         } else {
           setProfile(null)
+          setAuthError("Profil introuvable pour cet utilisateur.")
         }
-      } catch (error) {
-        console.log('onAuthStateChange error:', error)
-        if (!active) return
-        setAuthError('Erreur pendant la mise à jour de la session.')
-      } finally {
-        if (active) {
-          setLoadingAuth(false)
-        }
+      } else {
+        setProfile(null)
+      }
+
+      if (active) {
+        setLoadingAuth(false)
       }
     })
 
@@ -115,56 +75,101 @@ export default function App() {
     }
   }, [])
 
-  async function fetchProfile(userId) {
+  async function initAuth() {
     try {
-      const { data, error } = await withTimeout(
-        supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', userId)
-          .maybeSingle(),
-        10000
-      )
+      setLoadingAuth(true)
+      setAuthError('')
+
+      const { data, error } = await supabase.auth.getSession()
 
       if (error) {
-        console.log('fetchProfile error:', error)
+        console.log(error)
+        setAuthError("Impossible de vérifier la session pour le moment.")
+        setSession(null)
+        setProfile(null)
+        setLoadingAuth(false)
+        return
+      }
+
+      const currentSession = data?.session || null
+      setSession(currentSession)
+
+      if (currentSession?.user?.id) {
+        const loadedProfile = await fetchProfile(currentSession.user.id)
+
+        if (loadedProfile) {
+          setProfile(loadedProfile)
+        } else {
+          setProfile(null)
+          setAuthError("Profil introuvable pour cet utilisateur.")
+        }
+      } else {
+        setProfile(null)
+      }
+
+      setLoadingAuth(false)
+    } catch (error) {
+      console.log(error)
+      setAuthError("Erreur de chargement de session.")
+      setSession(null)
+      setProfile(null)
+      setLoadingAuth(false)
+    }
+  }
+
+  async function fetchProfile(userId) {
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', userId)
+        .maybeSingle()
+
+      if (error) {
+        console.log(error)
         return null
       }
 
       return data || null
     } catch (error) {
-      console.log('fetchProfile crash:', error)
+      console.log(error)
       return null
     }
   }
 
-  async function logout() {
+  async function resetSession() {
     try {
       await supabase.auth.signOut()
     } catch (error) {
-      console.log('logout error:', error)
+      console.log(error)
     }
 
     localStorage.removeItem('assistant_session')
     setSession(null)
     setProfile(null)
     setAssistantSession(null)
-    setPage('home')
-    setAuthPage('login')
+    setAuthError('')
     setLoadingAuth(false)
-    setAuthError('')
-  }
-
-  function resetAssistantOnly() {
-    localStorage.removeItem('assistant_session')
-    setAssistantSession(null)
-    setAuthPage('login')
     setPage('home')
-    setAuthError('')
+    setAuthPage('login')
+    window.location.reload()
   }
 
-  const activeProfile = session ? profile : assistantSession || null
-  const isAdmin = activeProfile?.role === 'admin'
+  async function logout() {
+    try {
+      await supabase.auth.signOut()
+    } catch (error) {
+      console.log(error)
+    }
+
+    localStorage.removeItem('assistant_session')
+    setSession(null)
+    setProfile(null)
+    setAssistantSession(null)
+    setAuthError('')
+    setPage('home')
+    setAuthPage('login')
+  }
 
   if (!entered) {
     return <PortalPage onEnter={() => setEntered(true)} />
@@ -173,42 +178,42 @@ export default function App() {
   if (loadingAuth) {
     return (
       <div style={styles.loadingPage}>
-        <p style={styles.loadingText}>Chargement...</p>
+        <div style={styles.loadingBox}>
+          <p style={styles.loadingText}>Chargement profil...</p>
 
-        {authError ? <p style={styles.errorText}>{authError}</p> : null}
+          {authError ? <p style={styles.errorText}>{authError}</p> : null}
 
-        <button
-          type="button"
-          onClick={() => window.location.reload()}
-          style={styles.reloadButton}
-        >
-          Actualiser
-        </button>
+          <button
+            type="button"
+            style={styles.reloadButton}
+            onClick={() => window.location.reload()}
+          >
+            Actualiser
+          </button>
 
-        <button
-          type="button"
-          onClick={() => {
-            setLoadingAuth(false)
-            setAuthPage('login')
-          }}
-          style={styles.secondaryButton}
-        >
-          Continuer vers la connexion
-        </button>
+          <button
+            type="button"
+            style={styles.resetButton}
+            onClick={resetSession}
+          >
+            Réinitialiser session
+          </button>
+        </div>
       </div>
     )
   }
+
+  const activeProfile = session ? profile : assistantSession
+  const isAdmin = activeProfile?.role === 'admin'
 
   if (!session && !assistantSession) {
     if (authPage === 'assistant-login') {
       return (
         <AssistantLoginPage
           onLoginSuccess={(assistantData) => {
-            localStorage.setItem('assistant_session', JSON.stringify(assistantData))
             setAssistantSession(assistantData)
             setAuthPage('login')
             setPage('home')
-            setAuthError('')
           }}
           onBack={() => setAuthPage('login')}
         />
@@ -225,25 +230,27 @@ export default function App() {
   if (session && !profile) {
     return (
       <div style={styles.loadingPage}>
-        <p style={styles.loadingText}>Chargement profil...</p>
+        <div style={styles.loadingBox}>
+          <p style={styles.loadingText}>Chargement profil...</p>
 
-        {authError ? <p style={styles.errorText}>{authError}</p> : null}
+          {authError ? <p style={styles.errorText}>{authError}</p> : null}
 
-        <button
-          type="button"
-          onClick={() => window.location.reload()}
-          style={styles.reloadButton}
-        >
-          Actualiser
-        </button>
+          <button
+            type="button"
+            style={styles.reloadButton}
+            onClick={initAuth}
+          >
+            Actualiser
+          </button>
 
-        <button
-          type="button"
-          onClick={logout}
-          style={styles.resetButton}
-        >
-          Réinitialiser session
-        </button>
+          <button
+            type="button"
+            style={styles.resetButton}
+            onClick={resetSession}
+          >
+            Réinitialiser session
+          </button>
+        </div>
       </div>
     )
   }
@@ -269,7 +276,6 @@ export default function App() {
           />
         )
       }
-
       return <ClassesPage profile={activeProfile} />
     }
 
@@ -321,20 +327,18 @@ export default function App() {
   }
 
   return (
-    <ErrorBoundary>
-      <div style={styles.app}>
-        {page !== 'home' && (
-          <MainMenu
-            currentPage={page}
-            onChangePage={setPage}
-            profile={activeProfile}
-            onLogout={session ? logout : resetAssistantOnly}
-          />
-        )}
+    <div style={styles.app}>
+      {page !== 'home' && (
+        <MainMenu
+          currentPage={page}
+          onChangePage={setPage}
+          profile={activeProfile}
+          onLogout={logout}
+        />
+      )}
 
-        <div style={styles.content}>{renderPage()}</div>
-      </div>
-    </ErrorBoundary>
+      <div style={styles.content}>{renderPage()}</div>
+    </div>
   )
 }
 
@@ -355,50 +359,52 @@ const styles = {
   loadingPage: {
     minHeight: '100vh',
     display: 'flex',
-    flexDirection: 'column',
-    justifyContent: 'center',
     alignItems: 'center',
-    gap: 12,
+    justifyContent: 'center',
     background: '#f7f1fb',
     padding: 20,
   },
+  loadingBox: {
+    width: '100%',
+    maxWidth: 420,
+    textAlign: 'center',
+  },
   loadingText: {
-    margin: 0,
-    fontSize: 18,
+    fontSize: 24,
     color: '#666',
+    marginBottom: 16,
   },
   errorText: {
-    margin: 0,
-    fontSize: 15,
     color: '#d91e18',
-    textAlign: 'center',
-    maxWidth: 320,
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 16,
+    lineHeight: 1.5,
   },
   reloadButton: {
-    padding: '12px 18px',
-    borderRadius: 12,
+    display: 'block',
+    width: '100%',
+    maxWidth: 220,
+    margin: '0 auto 16px',
+    padding: 14,
+    borderRadius: 18,
     border: 'none',
     background: '#2b0a78',
     color: '#fff',
-    fontWeight: 'bold',
     fontSize: 16,
-  },
-  secondaryButton: {
-    padding: '12px 18px',
-    borderRadius: 12,
-    border: '2px solid #d8c8ef',
-    background: '#fff',
-    color: '#2b0a78',
     fontWeight: 'bold',
-    fontSize: 16,
   },
   resetButton: {
-    padding: '12px 18px',
-    borderRadius: 12,
+    display: 'block',
+    width: '100%',
+    maxWidth: 340,
+    margin: '0 auto',
+    padding: 16,
+    borderRadius: 18,
     border: 'none',
-    background: '#d91e18',
+    background: '#e51612',
     color: '#fff',
+    fontSize: 18,
     fontWeight: 'bold',
-    fontSize: 16,
   },
 }
