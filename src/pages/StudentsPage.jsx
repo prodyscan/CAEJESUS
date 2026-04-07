@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { supabase } from '../supabaseClient'
 import StudentDetailPage from './StudentDetailPage'
 
@@ -8,13 +8,11 @@ const emptyForm = {
   sexe: '',
   class_id: '',
   matricule: '',
-
   ministere: '',
   profession: '',
   denomination: '',
   quartier: '',
   signature: '',
-
   telephone: '',
   telephone_secondaire: '',
   email: '',
@@ -33,7 +31,9 @@ export default function StudentsPage({ profile }) {
   const [form, setForm] = useState(emptyForm)
   const [message, setMessage] = useState('')
   const [openMenuId, setOpenMenuId] = useState(null)
-  const formRef = useRef(null)
+  const [certificatStudentId, setCertificatStudentId] = useState(null)
+  const [certificatDate, setCertificatDate] = useState('')
+  const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 })
 
   const isAdmin = profile?.role === 'admin'
   const assistantClassId =
@@ -128,7 +128,6 @@ export default function StudentsPage({ profile }) {
         ...prev,
         date_naissance_text: value,
         date_naissance: `${year}-${month}-${day}`,
-        annee_naissance: year,
       }))
     }
   }
@@ -165,30 +164,60 @@ export default function StudentsPage({ profile }) {
     setOpenMenuId(null)
   }
 
-  async function toggleCertificat(student) {
+  function openMenu(studentId, event) {
+    const rect = event.currentTarget.getBoundingClientRect()
+
+    const dropdownWidth = 220
+    const dropdownHeight = 320
+
+    let left = rect.right - dropdownWidth
+    if (left < 12) left = 12
+
+    let top = rect.bottom + 8
+
+    const spaceBelow = window.innerHeight - rect.bottom
+    if (spaceBelow < dropdownHeight) {
+      top = rect.top - dropdownHeight - 8
+    }
+
+    if (top < 12) top = 12
+
+    setMenuPosition({ top, left })
+    setOpenMenuId(openMenuId === studentId ? null : studentId)
+  }
+
+  function toggleCertificat(student) {
     if (!isAdmin) {
       setMessage("Seul l'administrateur peut valider le certificat")
       return
     }
 
-    const actionLabel = student.certificat_recu
-      ? 'retirer la validation du certificat'
-      : 'confirmer que cet étudiant a reçu son certificat'
+    if (student.certificat_recu) {
+      removeCertificat(student.id)
+      return
+    }
 
-    const ok = window.confirm(`Voulez-vous ${actionLabel} ?`)
-    if (!ok) return
+    setCertificatStudentId(student.id)
+    setCertificatDate(
+      student.date_reception_certificat || new Date().toISOString().slice(0, 10)
+    )
+    setOpenMenuId(null)
+    setMessage('Choisis la date de réception du certificat')
+  }
 
-    const payload = {
-      certificat_recu: !student.certificat_recu,
-      date_reception_certificat: !student.certificat_recu
-        ? new Date().toISOString().slice(0, 10)
-        : null,
+  async function confirmCertificat() {
+    if (!certificatStudentId || !certificatDate) {
+      setMessage('Choisis la date de réception du certificat')
+      return
     }
 
     const { error } = await supabase
       .from('students')
-      .update(payload)
-      .eq('id', student.id)
+      .update({
+        certificat_recu: true,
+        date_reception_certificat: certificatDate,
+      })
+      .eq('id', certificatStudentId)
 
     if (error) {
       console.log(error)
@@ -196,13 +225,34 @@ export default function StudentsPage({ profile }) {
       return
     }
 
-    setMessage(
-      !student.certificat_recu
-        ? 'Certificat validé'
-        : 'Validation certificat retirée'
-    )
+    setCertificatStudentId(null)
+    setCertificatDate('')
+    setMessage('Certificat validé')
+    getStudents()
+  }
 
+  async function removeCertificat(studentId) {
+    const ok = window.confirm('Retirer la validation du certificat ?')
+    if (!ok) return
+
+    const { error } = await supabase
+      .from('students')
+      .update({
+        certificat_recu: false,
+        date_reception_certificat: null,
+      })
+      .eq('id', studentId)
+
+    if (error) {
+      console.log(error)
+      setMessage('Erreur mise à jour certificat')
+      return
+    }
+
+    setCertificatStudentId(null)
+    setCertificatDate('')
     setOpenMenuId(null)
+    setMessage('Validation certificat retirée')
     getStudents()
   }
 
@@ -233,13 +283,11 @@ export default function StudentsPage({ profile }) {
       sexe: form.sexe,
       class_id: finalClassId,
       matricule: editingId ? form.matricule : generateMatricule(),
-
       ministere: form.ministere.trim(),
       profession: form.profession.trim(),
       denomination: form.denomination.trim(),
       quartier: form.quartier.trim(),
       signature: form.signature.trim(),
-
       telephone: form.telephone || '',
       telephone_secondaire: form.telephone_secondaire || '',
       email: form.email || '',
@@ -269,9 +317,7 @@ export default function StudentsPage({ profile }) {
     if (error) {
       console.log(error)
       setMessage(
-        editingId
-          ? 'Erreur modification étudiant'
-          : 'Erreur ajout étudiant'
+        editingId ? 'Erreur modification étudiant' : 'Erreur ajout étudiant'
       )
       return
     }
@@ -280,13 +326,6 @@ export default function StudentsPage({ profile }) {
     setEditingId(null)
     setMessage(editingId ? 'Étudiant modifié' : 'Étudiant ajouté')
     getStudents()
-
-    setTimeout(() => {
-      formRef.current?.scrollIntoView({
-        behavior: 'smooth',
-        block: 'start',
-      })
-    }, 100)
   }
 
   function editStudent(student) {
@@ -298,13 +337,11 @@ export default function StudentsPage({ profile }) {
       sexe: student.sexe || '',
       class_id: student.class_id || '',
       matricule: student.matricule || '',
-
       ministere: student.ministere || '',
       profession: student.profession || '',
       denomination: student.denomination || '',
       quartier: student.quartier || '',
       signature: student.signature || '',
-
       telephone: student.telephone || '',
       telephone_secondaire: student.telephone_secondaire || '',
       email: student.email || '',
@@ -318,13 +355,6 @@ export default function StudentsPage({ profile }) {
 
     setMessage('')
     setOpenMenuId(null)
-
-    setTimeout(() => {
-      formRef.current?.scrollIntoView({
-        behavior: 'smooth',
-        block: 'start',
-      })
-    }, 100)
   }
 
   function cancelEdit() {
@@ -332,13 +362,6 @@ export default function StudentsPage({ profile }) {
     setForm(emptyForm)
     setMessage('')
     setOpenMenuId(null)
-
-    setTimeout(() => {
-      formRef.current?.scrollIntoView({
-        behavior: 'smooth',
-        block: 'start',
-      })
-    }, 100)
   }
 
   async function deleteStudent(id) {
@@ -363,7 +386,6 @@ export default function StudentsPage({ profile }) {
 
   const filteredStudents = students.filter((student) => {
     const query = search.trim().toLowerCase()
-
     if (!query) return true
 
     const fullName = `${student.nom || ''} ${student.prenom || ''}`.toLowerCase()
@@ -394,8 +416,88 @@ export default function StudentsPage({ profile }) {
 
   return (
     <div style={styles.page}>
+      {openMenuId && (
+        <div
+          style={styles.menuOverlay}
+          onClick={() => setOpenMenuId(null)}
+        />
+      )}
+
+      {openMenuId && (
+        <div
+          style={{
+            ...styles.dropdown,
+            top: menuPosition.top,
+            left: menuPosition.left,
+          }}
+        >
+          {(() => {
+            const s = students.find((item) => item.id === openMenuId)
+            if (!s) return null
+
+            return (
+              <>
+                <button
+                  type="button"
+                  style={styles.dropdownItem}
+                  onClick={() => {
+                    setSelectedStudentId(s.id)
+                    setOpenMenuId(null)
+                  }}
+                >
+                  Voir
+                </button>
+
+                <button
+                  type="button"
+                  style={styles.dropdownItem}
+                  onClick={() => openWhatsApp(s.telephone)}
+                >
+                  WhatsApp
+                </button>
+
+                <button
+                  type="button"
+                  style={styles.dropdownItem}
+                  onClick={() => callStudent(s.telephone)}
+                >
+                  Appeler
+                </button>
+
+                <button
+                  type="button"
+                  style={styles.dropdownItem}
+                  onClick={() => editStudent(s)}
+                >
+                  Modifier
+                </button>
+
+                {isAdmin && (
+                  <button
+                    type="button"
+                    style={styles.dropdownItem}
+                    onClick={() => toggleCertificat(s)}
+                  >
+                    {s.certificat_recu
+                      ? 'Retirer certificat'
+                      : 'Valider certificat'}
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  style={{ ...styles.dropdownItem, color: '#d91e18' }}
+                  onClick={() => deleteStudent(s.id)}
+                >
+                  Supprimer
+                </button>
+              </>
+            )
+          })()}
+        </div>
+      )}
+
       <div
-        ref={formRef}
         style={{
           ...styles.card,
           ...(editingId ? styles.cardEditing : {}),
@@ -410,7 +512,6 @@ export default function StudentsPage({ profile }) {
         )}
 
         <form onSubmit={saveStudent}>
-
           {isAdmin ? (
             <select
               style={styles.input}
@@ -482,7 +583,6 @@ export default function StudentsPage({ profile }) {
             onChange={handleDateTextChange}
           />
 
-
           <input
             style={styles.input}
             name="lieu_naissance"
@@ -490,6 +590,7 @@ export default function StudentsPage({ profile }) {
             value={form.lieu_naissance}
             onChange={handleChange}
           />
+
           <input
             style={styles.input}
             name="date_ajout_etudiant"
@@ -513,7 +614,6 @@ export default function StudentsPage({ profile }) {
             <option value="homme">Homme</option>
             <option value="femme">Femme</option>
           </select>
-
 
           <input
             style={styles.input}
@@ -586,6 +686,41 @@ export default function StudentsPage({ profile }) {
       <div style={styles.card}>
         <h3 style={styles.sectionTitle}>Liste</h3>
 
+        {isAdmin && certificatStudentId && (
+          <div style={styles.certificatBox}>
+            <p style={styles.certificatTitle}>
+              Date de réception du certificat
+            </p>
+
+            <input
+              style={styles.input}
+              type="date"
+              value={certificatDate}
+              onChange={(e) => setCertificatDate(e.target.value)}
+            />
+
+            <button
+              type="button"
+              style={styles.addButton}
+              onClick={confirmCertificat}
+            >
+              Confirmer certificat
+            </button>
+
+            <button
+              type="button"
+              style={styles.cancelButton}
+              onClick={() => {
+                setCertificatStudentId(null)
+                setCertificatDate('')
+                setMessage('')
+              }}
+            >
+              Annuler
+            </button>
+          </div>
+        )}
+
         <input
           style={styles.input}
           placeholder="Rechercher par nom, matricule, téléphone ou email..."
@@ -605,85 +740,17 @@ export default function StudentsPage({ profile }) {
                   </strong>
 
                   {s.certificat_recu && (
-                    <span style={styles.certBadge}>
-                      Certificat reçu
-                    </span>
+                    <span style={styles.certBadge}>Certificat reçu</span>
                   )}
                 </div>
 
-                <div style={styles.menuWrapper}>
-                  <button
-                    type="button"
-                    style={styles.menuButton}
-                    onClick={() =>
-                      setOpenMenuId(openMenuId === s.id ? null : s.id)
-                    }
-                  >
-                    ⋮
-                  </button>
-
-                  {openMenuId === s.id && (
-                    <div style={styles.dropdown}>
-                      <button
-                        type="button"
-                        style={styles.dropdownItem}
-                        onClick={() => {
-                          setSelectedStudentId(s.id)
-                          setOpenMenuId(null)
-                        }}
-                      >
-                        Voir
-                      </button>
-
-                      <button
-                        type="button"
-                        style={styles.dropdownItem}
-                        onClick={() => openWhatsApp(s.telephone)}
-                      >
-                        WhatsApp
-                      </button>
-
-                      <button
-                        type="button"
-                        style={styles.dropdownItem}
-                        onClick={() => callStudent(s.telephone)}
-                      >
-                        Appeler
-                      </button>
-
-                      <button
-                        type="button"
-                        style={styles.dropdownItem}
-                        onClick={() => editStudent(s)}
-                      >
-                        Modifier
-                      </button>
-
-                      {isAdmin && (
-                        <button
-                          type="button"
-                          style={styles.dropdownItem}
-                          onClick={() => toggleCertificat(s)}
-                        >
-                          {s.certificat_recu
-                            ? 'Retirer certificat'
-                            : 'Valider certificat'}
-                        </button>
-                      )}
-
-                      <button
-                        type="button"
-                        style={{
-                          ...styles.dropdownItem,
-                          color: '#d91e18',
-                        }}
-                        onClick={() => deleteStudent(s.id)}
-                      >
-                        Supprimer
-                      </button>
-                    </div>
-                  )}
-                </div>
+                <button
+                  type="button"
+                  style={styles.menuButton}
+                  onClick={(e) => openMenu(s.id, e)}
+                >
+                  ⋮
+                </button>
               </div>
             </div>
           ))
@@ -701,6 +768,14 @@ const styles = {
     fontFamily: 'Arial, sans-serif',
     background: '#f7f1fb',
     minHeight: '100vh',
+    position: 'relative',
+  },
+
+  menuOverlay: {
+    position: 'fixed',
+    inset: 0,
+    background: 'transparent',
+    zIndex: 9998,
   },
 
   card: {
@@ -710,6 +785,8 @@ const styles = {
     padding: 18,
     marginBottom: 20,
     boxShadow: '0 10px 24px rgba(43, 10, 120, 0.08)',
+    position: 'relative',
+    overflow: 'visible',
   },
 
   cardEditing: {
@@ -748,15 +825,6 @@ const styles = {
     textAlign: 'center',
   },
 
-  fieldLabel: {
-    display: 'block',
-    marginBottom: 6,
-    marginTop: 4,
-    color: '#2b0a78',
-    fontWeight: 'bold',
-    fontSize: 15,
-  },
-
   input: {
     width: '100%',
     padding: 14,
@@ -779,6 +847,22 @@ const styles = {
     color: '#2b0a78',
     fontWeight: 'bold',
     boxSizing: 'border-box',
+    textAlign: 'center',
+  },
+
+  certificatBox: {
+    marginBottom: 14,
+    padding: 14,
+    borderRadius: 14,
+    border: '2px solid #eadcf9',
+    background: '#fbf8ff',
+  },
+
+  certificatTitle: {
+    marginTop: 0,
+    marginBottom: 10,
+    color: '#2b0a78',
+    fontWeight: 'bold',
     textAlign: 'center',
   },
 
@@ -848,10 +932,6 @@ const styles = {
     textAlign: 'center',
   },
 
-  menuWrapper: {
-    position: 'relative',
-  },
-
   menuButton: {
     border: 'none',
     background: '#fff',
@@ -863,28 +943,26 @@ const styles = {
   },
 
   dropdown: {
-    position: 'absolute',
-    right: 0,
-    top: 36,
-    minWidth: 190,
+    position: 'fixed',
+    minWidth: 220,
     background: '#fff',
     border: '2px solid #eadcf9',
     borderRadius: 14,
     boxShadow: '0 10px 22px rgba(43, 10, 120, 0.14)',
     overflow: 'hidden',
-    zIndex: 20,
+    zIndex: 9999,
   },
 
   dropdownItem: {
     display: 'block',
     width: '100%',
     textAlign: 'left',
-    padding: 14,
+    padding: 16,
     border: 'none',
     background: '#fff',
     color: '#2b0a78',
     fontWeight: 'bold',
-    fontSize: 15,
+    fontSize: 16,
     borderBottom: '1px solid #f1e9fb',
   },
 

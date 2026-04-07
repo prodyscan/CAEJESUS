@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { Html5Qrcode } from 'html5-qrcode'
 import { supabase } from '../supabaseClient'
 
 export default function SeanceDetailPage({ seanceId, onBack }) {
@@ -13,11 +14,31 @@ export default function SeanceDetailPage({ seanceId, onBack }) {
   const [temoignage, setTemoignage] = useState('')
   const [loadingRapport, setLoadingRapport] = useState(false)
   const [editingRapport, setEditingRapport] = useState(true)
-  const [closingLoading, setClosingLoading] = useState(false)
+  const [cameraError, setCameraError] = useState('')
+  const [startingCamera, setStartingCamera] = useState(false)
+
+  const qrScannerRef = useRef(null)
+  const lastScanRef = useRef('')
+  const lastScanTimeRef = useRef(0)
 
   useEffect(() => {
     loadData()
+    return () => {
+      stopQrScanner()
+    }
   }, [seanceId])
+
+  useEffect(() => {
+    if (pointageMode === 'qr') {
+      startQrScanner()
+    } else {
+      stopQrScanner()
+    }
+
+    return () => {
+      stopQrScanner()
+    }
+  }, [pointageMode, students.length])
 
   async function loadData() {
     setMessage('')
@@ -122,16 +143,7 @@ export default function SeanceDetailPage({ seanceId, onBack }) {
     )
   }
 
-  function isSeanceCloturee() {
-    return !!seance?.cloturee
-  }
-
   async function markPresence(studentId, statut) {
-    if (isSeanceCloturee()) {
-      setMessage('La séance est clôturée')
-      return
-    }
-
     setMessage('')
 
     const { error } = await supabase
@@ -144,7 +156,7 @@ export default function SeanceDetailPage({ seanceId, onBack }) {
     if (error) {
       console.log(error)
       setMessage('Erreur enregistrement pointage')
-      return
+      return false
     }
 
     setPresences((prev) => ({
@@ -152,16 +164,11 @@ export default function SeanceDetailPage({ seanceId, onBack }) {
       [studentId]: statut,
     }))
 
-    setMessage('Pointage enregistré')
+    return true
   }
 
   async function markByMatricule(e) {
     e.preventDefault()
-
-    if (isSeanceCloturee()) {
-      setMessage('La séance est clôturée')
-      return
-    }
 
     const code = matriculeInput.trim()
 
@@ -177,115 +184,102 @@ export default function SeanceDetailPage({ seanceId, onBack }) {
       return
     }
 
-    await markPresence(student.id, 'present')
-    setMatriculeInput('')
-    setMessage(`Présence validée : ${student.nom} ${student.prenom}`)
+    const ok = await markPresence(student.id, 'present')
+    if (ok) {
+      setMatriculeInput('')
+      setMessage(`Présence validée : ${student.nom} ${student.prenom}`)
+    }
   }
 
-  function handleQrResult(code) {
-    if (isSeanceCloturee()) {
-      setMessage('La séance est clôturée')
+  async function handleQrScan(decodedText) {
+    const code = decodedText.trim()
+    if (!code) return
+
+    const now = Date.now()
+
+    if (
+      lastScanRef.current === code &&
+      now - lastScanTimeRef.current < 2000
+    ) {
       return
     }
 
-    const cleanCode = String(code || '').trim()
+    lastScanRef.current = code
+    lastScanTimeRef.current = now
 
-    if (!cleanCode) {
-      setMessage('Entre ou scanne un code')
-      return
-    }
-
-    const student = findStudentByMatricule(cleanCode)
+    const student = findStudentByMatricule(code)
 
     if (!student) {
-      setMessage('Aucun étudiant trouvé avec ce QR code')
+      setMessage(`QR non reconnu : ${code}`)
       return
     }
 
-    markPresence(student.id, 'present')
-    setMatriculeInput('')
-    setMessage(`Présence validée : ${student.nom} ${student.prenom}`)
+    const ok = await markPresence(student.id, 'present')
+    if (ok) {
+      setMessage(`Présence validée par QR : ${student.nom} ${student.prenom}`)
+    }
   }
 
-  async function cloturerSeance() {
-    if (!seance) return
+  async function startQrScanner() {
+    if (qrScannerRef.current) return
+    if (!students.length) return
 
-    const ok = window.confirm(
-      "Clôturer cette séance ? Tous les étudiants non pointés seront marqués absents."
-    )
-    if (!ok) return
+    setCameraError('')
+    setStartingCamera(true)
 
-    setClosingLoading(true)
-    setMessage('')
+    const isLocalhost =
+      window.location.hostname === 'localhost' ||
+      window.location.hostname === '127.0.0.1'
 
-    const nonPointes = students.filter((student) => !presences[student.id])
-
-    if (nonPointes.length > 0) {
-      const payloadAbsents = nonPointes.map((student) => ({
-        seance_id: seanceId,
-        student_id: student.id,
-        statut: 'absent',
-      }))
-
-      const { error: absentsError } = await supabase
-        .from('presences')
-        .upsert(payloadAbsents, { onConflict: 'seance_id,student_id' })
-
-      if (absentsError) {
-        console.log(absentsError)
-        setClosingLoading(false)
-        setMessage('Erreur clôture séance')
-        return
-      }
-    }
-
-    const { error } = await supabase
-      .from('seances')
-      .update({
-        cloturee: true,
-        date_cloture: new Date().toISOString(),
-      })
-      .eq('id', seanceId)
-
-    setClosingLoading(false)
-
-    if (error) {
-      console.log(error)
-      setMessage('Erreur clôture séance')
+    if (!window.isSecureContext && !isLocalhost) {
+      setCameraError('La caméra demande HTTPS ou localhost.')
+      setStartingCamera(false)
       return
     }
 
-    setMessage('Séance clôturée')
-    loadData()
+    try {
+      const scanner = new Html5Qrcode('qr-reader')
+      qrScannerRef.current = scanner
+
+      await scanner.start(
+        { facingMode: 'environment' },
+        {
+          fps: 10,
+          qrbox: { width: 220, height: 220 },
+          aspectRatio: 1,
+        },
+        async (decodedText) => {
+          await handleQrScan(decodedText)
+        },
+        () => {}
+      )
+
+      setStartingCamera(false)
+    } catch (error) {
+      console.log(error)
+      setCameraError('Impossible de démarrer la caméra QR.')
+      setStartingCamera(false)
+      qrScannerRef.current = null
+    }
   }
 
-  async function reouvrirSeance() {
-    if (!seance) return
+  async function stopQrScanner() {
+    const scanner = qrScannerRef.current
+    if (!scanner) return
 
-    const ok = window.confirm('Réouvrir cette séance ?')
-    if (!ok) return
-
-    setClosingLoading(true)
-    setMessage('')
-
-    const { error } = await supabase
-      .from('seances')
-      .update({
-        cloturee: false,
-        date_cloture: null,
-      })
-      .eq('id', seanceId)
-
-    setClosingLoading(false)
-
-    if (error) {
+    try {
+      await scanner.stop()
+    } catch (error) {
       console.log(error)
-      setMessage('Erreur réouverture séance')
-      return
     }
 
-    setMessage('Séance réouverte')
-    loadData()
+    try {
+      await scanner.clear()
+    } catch (error) {
+      console.log(error)
+    }
+
+    qrScannerRef.current = null
   }
 
   async function saveRapport() {
@@ -363,19 +357,11 @@ export default function SeanceDetailPage({ seanceId, onBack }) {
   }
 
   function getContributionsOfDay() {
-    return paiements.filter(
-      (p) =>
-        p.type_paiement === 'contribution' ||
-        p.type_paiement === 'contribution_arrieree'
-    )
+    return paiements.filter((p) => p.type_paiement === 'contribution')
   }
 
   function getInscriptionsOfDay() {
-    return paiements.filter(
-      (p) =>
-        p.type_paiement === 'inscription' ||
-        p.type_paiement === 'inscription_arrieree'
-    )
+    return paiements.filter((p) => p.type_paiement === 'inscription')
   }
 
   function getNombreHommes() {
@@ -568,30 +554,6 @@ export default function SeanceDetailPage({ seanceId, onBack }) {
           <p><strong>Centre :</strong> {seance.classes?.nom || '-'}</p>
           <p><strong>Année :</strong> {seance.classes?.annee || '-'}</p>
           <p><strong>Date :</strong> {seance.date_seance || '-'}</p>
-          <p><strong>Statut :</strong> {seance.cloturee ? 'Clôturée' : 'Ouverte'}</p>
-          <p><strong>Date clôture :</strong> {seance.date_cloture || '-'}</p>
-        </div>
-
-        <div style={styles.actionRow}>
-          {!seance.cloturee ? (
-            <button
-              type="button"
-              style={styles.absentButton}
-              onClick={cloturerSeance}
-              disabled={closingLoading}
-            >
-              {closingLoading ? 'Clôture...' : 'Clôturer la séance'}
-            </button>
-          ) : (
-            <button
-              type="button"
-              style={styles.primaryButton}
-              onClick={reouvrirSeance}
-              disabled={closingLoading}
-            >
-              {closingLoading ? 'Réouverture...' : 'Réouvrir la séance'}
-            </button>
-          )}
         </div>
 
         {message ? <p style={styles.message}>{message}</p> : null}
@@ -614,7 +576,7 @@ export default function SeanceDetailPage({ seanceId, onBack }) {
             onClick={() => setPointageMode('qr')}
             style={pointageMode === 'qr' ? styles.modeButtonActive : styles.modeButton}
           >
-            QR Code
+            QR caméra
           </button>
 
           <button
@@ -637,7 +599,6 @@ export default function SeanceDetailPage({ seanceId, onBack }) {
                 value={matriculeInput}
                 onChange={(e) => setMatriculeInput(e.target.value)}
               />
-
               <button style={styles.primaryButtonFull} type="submit">
                 Valider présence
               </button>
@@ -647,21 +608,31 @@ export default function SeanceDetailPage({ seanceId, onBack }) {
 
         {pointageMode === 'qr' && (
           <div style={styles.innerCard}>
-            <h3 style={styles.sectionTitle}>Pointage par QR Code</h3>
+            <h3 style={styles.sectionTitle}>Scan QR avec caméra</h3>
 
-            <input
-              style={styles.input}
-              placeholder="Scanner ou coller le code QR / matricule"
-              value={matriculeInput}
-              onChange={(e) => setMatriculeInput(e.target.value)}
-            />
+            <p style={styles.helperText}>
+              Présente le QR de l’étudiant devant la caméra.
+            </p>
+
+            {startingCamera ? (
+              <p style={styles.cameraInfo}>Démarrage caméra...</p>
+            ) : null}
+
+            {cameraError ? (
+              <p style={styles.cameraError}>{cameraError}</p>
+            ) : null}
+
+            <div id="qr-reader" style={styles.qrReader} />
 
             <button
               type="button"
-              style={styles.primaryButtonFull}
-              onClick={() => handleQrResult(matriculeInput.trim())}
+              style={styles.secondaryButtonFull}
+              onClick={async () => {
+                await stopQrScanner()
+                await startQrScanner()
+              }}
             >
-              Valider QR
+              Redémarrer la caméra
             </button>
           </div>
         )}
@@ -942,6 +913,31 @@ const styles = {
     color: '#6f5b84',
     textAlign: 'center',
     fontSize: 24,
+  },
+  helperText: {
+    textAlign: 'center',
+    color: '#6f5b84',
+    marginBottom: 12,
+  },
+  cameraInfo: {
+    textAlign: 'center',
+    color: '#1565c0',
+    marginBottom: 12,
+    fontWeight: 'bold',
+  },
+  cameraError: {
+    textAlign: 'center',
+    color: '#d91e18',
+    marginBottom: 12,
+    fontWeight: 'bold',
+  },
+  qrReader: {
+    width: '100%',
+    minHeight: 280,
+    borderRadius: 12,
+    overflow: 'hidden',
+    background: '#fff',
+    marginBottom: 12,
   },
   modeSelector: {
     display: 'flex',

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import { supabase } from '../supabaseClient'
 
@@ -12,6 +12,10 @@ export default function StudentDetailPage({ studentId, onBack, profile }) {
   const [presences, setPresences] = useState({})
   const [paiements, setPaiements] = useState([])
   const [message, setMessage] = useState('')
+  const [showCertificatForm, setShowCertificatForm] = useState(false)
+  const [certificatDate, setCertificatDate] = useState('')
+
+  const qrWrapperRef = useRef(null)
 
   const isAdmin = profile?.role === 'admin'
 
@@ -49,7 +53,7 @@ export default function StudentDetailPage({ studentId, onBack, profile }) {
       .from('seances')
       .select('*')
       .eq('class_id', studentData.class_id)
-      .order('numero_seance', { ascending: true })
+      .order('date_seance', { ascending: true })
 
     setSeances(seancesData || [])
 
@@ -62,7 +66,6 @@ export default function StudentDetailPage({ studentId, onBack, profile }) {
     ;(pres || []).forEach((p) => {
       map[p.seance_id] = p.statut
     })
-
     setPresences(map)
 
     const { data: paiementsData } = await supabase
@@ -98,29 +101,38 @@ export default function StudentDetailPage({ studentId, onBack, profile }) {
     window.location.href = `tel:${cleanPhone}`
   }
 
-  async function toggleCertificat() {
+  function toggleCertificat() {
     if (!isAdmin || !student) {
       setMessage("Seul l'administrateur peut valider le certificat")
       return
     }
 
-    const actionLabel = student.certificat_recu
-      ? 'retirer la validation du certificat'
-      : 'confirmer que cet étudiant a reçu son certificat'
+    if (student.certificat_recu) {
+      removeCertificat()
+      return
+    }
 
-    const ok = window.confirm(`Voulez-vous ${actionLabel} ?`)
-    if (!ok) return
+    setCertificatDate(
+      student.date_reception_certificat || new Date().toISOString().slice(0, 10)
+    )
+    setShowCertificatForm(true)
+    setMessage('')
+  }
 
-    const payload = {
-      certificat_recu: !student.certificat_recu,
-      date_reception_certificat: !student.certificat_recu
-        ? new Date().toISOString().slice(0, 10)
-        : null,
+  async function confirmCertificat() {
+    if (!student) return
+
+    if (!certificatDate) {
+      setMessage('Choisis la date de réception du certificat')
+      return
     }
 
     const { error } = await supabase
       .from('students')
-      .update(payload)
+      .update({
+        certificat_recu: true,
+        date_reception_certificat: certificatDate,
+      })
       .eq('id', student.id)
 
     if (error) {
@@ -129,12 +141,35 @@ export default function StudentDetailPage({ studentId, onBack, profile }) {
       return
     }
 
-    setMessage(
-      !student.certificat_recu
-        ? 'Certificat validé'
-        : 'Validation certificat retirée'
-    )
+    setShowCertificatForm(false)
+    setCertificatDate('')
+    setMessage('Certificat validé')
+    loadData()
+  }
 
+  async function removeCertificat() {
+    if (!student) return
+
+    const ok = window.confirm('Retirer la validation du certificat ?')
+    if (!ok) return
+
+    const { error } = await supabase
+      .from('students')
+      .update({
+        certificat_recu: false,
+        date_reception_certificat: null,
+      })
+      .eq('id', student.id)
+
+    if (error) {
+      console.log(error)
+      setMessage('Erreur mise à jour certificat')
+      return
+    }
+
+    setShowCertificatForm(false)
+    setCertificatDate('')
+    setMessage('Validation certificat retirée')
     loadData()
   }
 
@@ -150,15 +185,27 @@ export default function StudentDetailPage({ studentId, onBack, profile }) {
     return seances.length - getCoursFaits() - getCoursRates()
   }
 
+  function getSeancesRatees() {
+    return seances.filter((s) => presences[s.id] === 'absent')
+  }
+
   function getInscriptionPaid() {
     return paiements
-      .filter((p) => p.type_paiement === 'inscription' || p.type_paiement === 'inscription_arriere')
+      .filter(
+        (p) =>
+          p.type_paiement === 'inscription' ||
+          p.type_paiement === 'inscription_arrieree'
+      )
       .reduce((sum, p) => sum + Number(p.montant || 0), 0)
   }
 
   function getContributionPaid() {
     return paiements
-      .filter((p) => p.type_paiement === 'contribution' || p.type_paiement === 'contribution_arriere')
+      .filter(
+        (p) =>
+          p.type_paiement === 'contribution' ||
+          p.type_paiement === 'contribution_arrieree'
+      )
       .reduce((sum, p) => sum + Number(p.montant || 0), 0)
   }
 
@@ -169,6 +216,87 @@ export default function StudentDetailPage({ studentId, onBack, profile }) {
 
   function isContributionOk() {
     return getContributionPaid() >= getContributionExpected()
+  }
+
+  function formatDate(dateValue) {
+    if (!dateValue) return '-'
+    const date = new Date(dateValue)
+    if (Number.isNaN(date.getTime())) return dateValue
+    return date.toLocaleDateString('fr-FR')
+  }
+
+  function downloadQrCode() {
+    if (!student?.matricule) {
+      setMessage('Aucun matricule trouvé')
+      return
+    }
+
+    const svg = qrWrapperRef.current?.querySelector('svg')
+    if (!svg) {
+      setMessage('QR code introuvable')
+      return
+    }
+
+    try {
+      const serializer = new XMLSerializer()
+      const source = serializer.serializeToString(svg)
+      const svgBlob = new Blob([source], {
+        type: 'image/svg+xml;charset=utf-8',
+      })
+      const url = URL.createObjectURL(svgBlob)
+
+      const img = new Image()
+
+      img.onload = () => {
+        const canvas = document.createElement('canvas')
+        canvas.width = 600
+        canvas.height = 700
+
+        const ctx = canvas.getContext('2d')
+        if (!ctx) {
+          URL.revokeObjectURL(url)
+          setMessage('Impossible de générer le QR')
+          return
+        }
+
+        ctx.fillStyle = '#ffffff'
+        ctx.fillRect(0, 0, canvas.width, canvas.height)
+
+        ctx.drawImage(img, 80, 40, 440, 440)
+
+        ctx.fillStyle = '#2b0a78'
+        ctx.font = 'bold 28px Arial'
+        ctx.textAlign = 'center'
+        ctx.fillText(student.matricule, canvas.width / 2, 540)
+
+        const fullName = `${student.nom || ''} ${student.prenom || ''}`.trim()
+        ctx.font = '24px Arial'
+        ctx.fillStyle = '#444'
+        ctx.fillText(fullName || 'Étudiant', canvas.width / 2, 590)
+
+        const pngUrl = canvas.toDataURL('image/png')
+
+        const link = document.createElement('a')
+        link.href = pngUrl
+        link.download = `${student.matricule}.png`
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
+
+        URL.revokeObjectURL(url)
+        setMessage('QR code téléchargé en PNG')
+      }
+
+      img.onerror = () => {
+        URL.revokeObjectURL(url)
+        setMessage('Erreur téléchargement QR')
+      }
+
+      img.src = url
+    } catch (error) {
+      console.log(error)
+      setMessage('Erreur téléchargement QR')
+    }
   }
 
   if (!student) {
@@ -204,25 +332,144 @@ export default function StudentDetailPage({ studentId, onBack, profile }) {
 
         {message ? <p style={styles.message}>{message}</p> : null}
 
-        <p><strong>Matricule :</strong> {student.matricule || '-'}</p>
-        <p><strong>Centre :</strong> {student.classes?.nom || '-'}</p>
-        <p><strong>Année :</strong> {student.classes?.annee || '-'}</p>
-        <p><strong>Sexe :</strong> {student.sexe || '-'}</p>
-        <p><strong>Numéro de téléphone :</strong> {student.telephone || '-'}</p>
-        <p><strong>Numéro téléphonique secondaire :</strong> {student.telephone_secondaire || '-'}</p>
-        <p><strong>Email :</strong> {student.email || '-'}</p>
-        <p><strong>Date de naissance :</strong> {student.date_naissance || '-'}</p>
-        <p><strong>Lieu de naissance :</strong> {student.lieu_naissance || '-'}</p>
-        <p><strong>Ministère :</strong> {student.ministere || '-'}</p>
-        <p><strong>Profession :</strong> {student.profession || '-'}</p>
-        <p><strong>Dénomination :</strong> {student.denomination || '-'}</p>
-        <p><strong>Quartier :</strong> {student.quartier || '-'}</p>
-        <p><strong>Signature :</strong> {student.signature || '-'}</p>
-        <p><strong>Inscription :</strong> {getInscriptionPaid() >= INSCRIPTION_MONTANT ? 'Payée' : 'Non payée'}</p>
-        <p><strong>Contribution à jour :</strong> {isContributionOk() ? 'Oui' : 'Non'}</p>
-        <p><strong>Contribution attendue :</strong> {getContributionExpected()} FCFA</p>
-        <p><strong>Contribution payée :</strong> {getContributionPaid()} FCFA</p>
-        <p><strong>Date réception certificat :</strong> {student.date_reception_certificat || '-'}</p>
+        <div style={styles.detailsGrid}>
+          <div style={styles.detailRow}>
+            <span style={styles.detailLabel}>Matricule</span>
+            <span style={styles.detailValue}>{student.matricule || '-'}</span>
+          </div>
+
+          <div style={styles.detailRow}>
+            <span style={styles.detailLabel}>Centre</span>
+            <span style={styles.detailValue}>{student.classes?.nom || '-'}</span>
+          </div>
+
+          <div style={styles.detailRow}>
+            <span style={styles.detailLabel}>Année</span>
+            <span style={styles.detailValue}>{student.classes?.annee || '-'}</span>
+          </div>
+
+          <div style={styles.detailRow}>
+            <span style={styles.detailLabel}>Sexe</span>
+            <span style={styles.detailValue}>{student.sexe || '-'}</span>
+          </div>
+
+          <div style={styles.detailRow}>
+            <span style={styles.detailLabel}>Téléphone</span>
+            <span style={styles.detailValue}>{student.telephone || '-'}</span>
+          </div>
+
+          <div style={styles.detailRow}>
+            <span style={styles.detailLabel}>Téléphone secondaire</span>
+            <span style={styles.detailValue}>{student.telephone_secondaire || '-'}</span>
+          </div>
+
+          <div style={styles.detailRow}>
+            <span style={styles.detailLabel}>Email</span>
+            <span style={styles.detailValue}>{student.email || '-'}</span>
+          </div>
+
+          <div style={styles.detailRow}>
+            <span style={styles.detailLabel}>Date de naissance</span>
+            <span style={styles.detailValue}>{formatDate(student.date_naissance)}</span>
+          </div>
+
+          <div style={styles.detailRow}>
+            <span style={styles.detailLabel}>Lieu de naissance</span>
+            <span style={styles.detailValue}>{student.lieu_naissance || '-'}</span>
+          </div>
+
+          <div style={styles.detailRow}>
+            <span style={styles.detailLabel}>Ministère</span>
+            <span style={styles.detailValue}>{student.ministere || '-'}</span>
+          </div>
+
+          <div style={styles.detailRow}>
+            <span style={styles.detailLabel}>Profession</span>
+            <span style={styles.detailValue}>{student.profession || '-'}</span>
+          </div>
+
+          <div style={styles.detailRow}>
+            <span style={styles.detailLabel}>Dénomination</span>
+            <span style={styles.detailValue}>{student.denomination || '-'}</span>
+          </div>
+
+          <div style={styles.detailRow}>
+            <span style={styles.detailLabel}>Quartier</span>
+            <span style={styles.detailValue}>{student.quartier || '-'}</span>
+          </div>
+
+          <div style={styles.detailRow}>
+            <span style={styles.detailLabel}>Signature</span>
+            <span style={styles.detailValue}>{student.signature || '-'}</span>
+          </div>
+
+          <div style={styles.detailRow}>
+            <span style={styles.detailLabel}>Inscription</span>
+            <span style={styles.detailValue}>
+              {getInscriptionPaid() >= INSCRIPTION_MONTANT ? 'Payée' : 'Non payée'}
+            </span>
+          </div>
+
+          <div style={styles.detailRow}>
+            <span style={styles.detailLabel}>Contribution à jour</span>
+            <span style={styles.detailValue}>
+              {isContributionOk() ? 'Oui' : 'Non'}
+            </span>
+          </div>
+
+          <div style={styles.detailRow}>
+            <span style={styles.detailLabel}>Contribution attendue</span>
+            <span style={styles.detailValue}>{getContributionExpected()} FCFA</span>
+          </div>
+
+          <div style={styles.detailRow}>
+            <span style={styles.detailLabel}>Contribution payée</span>
+            <span style={styles.detailValue}>{getContributionPaid()} FCFA</span>
+          </div>
+
+          <div style={styles.detailRow}>
+            <span style={styles.detailLabel}>Date réception certificat</span>
+            <span style={styles.detailValue}>
+              {student.date_reception_certificat
+                ? formatDate(student.date_reception_certificat)
+                : '-'}
+            </span>
+          </div>
+        </div>
+
+        {isAdmin && showCertificatForm && !student.certificat_recu && (
+          <div style={styles.certificatBox}>
+            <p style={styles.certificatTitle}>Date de réception du certificat</p>
+
+            <input
+              type="date"
+              style={styles.input}
+              value={certificatDate}
+              onChange={(e) => setCertificatDate(e.target.value)}
+            />
+
+            <div style={styles.actionRow}>
+              <button
+                type="button"
+                style={styles.certButton}
+                onClick={confirmCertificat}
+              >
+                Confirmer certificat
+              </button>
+
+              <button
+                type="button"
+                style={styles.secondaryButton}
+                onClick={() => {
+                  setShowCertificatForm(false)
+                  setCertificatDate('')
+                }}
+              >
+                Annuler
+              </button>
+            </div>
+          </div>
+        )}
 
         <div style={styles.actionRow}>
           <button
@@ -254,12 +501,20 @@ export default function StudentDetailPage({ studentId, onBack, profile }) {
       </div>
 
       <div style={styles.card}>
-        <h3>QR Code étudiant</h3>
+        <h3 style={styles.sectionTitle}>QR Code étudiant</h3>
 
         {student.matricule ? (
-          <div style={styles.qrBox}>
+          <div style={styles.qrBox} ref={qrWrapperRef}>
             <QRCodeSVG value={student.matricule} size={220} />
             <p style={styles.qrText}>{student.matricule}</p>
+
+            <button
+              type="button"
+              style={styles.downloadButton}
+              onClick={downloadQrCode}
+            >
+              Télécharger QR
+            </button>
           </div>
         ) : (
           <p>Aucun matricule trouvé.</p>
@@ -267,31 +522,90 @@ export default function StudentDetailPage({ studentId, onBack, profile }) {
       </div>
 
       <div style={styles.card}>
-        <h3>Résumé présence</h3>
-        <p><strong>Total séances :</strong> {seances.length}</p>
-        <p><strong>Cours suivis :</strong> {getCoursFaits()}</p>
-        <p><strong>Cours ratés :</strong> {getCoursRates()}</p>
-        <p><strong>Non pointés :</strong> {getCoursNonPointes()}</p>
+        <h3 style={styles.sectionTitle}>Résumé présence</h3>
+
+        <div style={styles.summaryGrid}>
+          <div style={styles.summaryBox}>
+            <strong>{seances.length}</strong>
+            <span>Total séances</span>
+          </div>
+
+          <div style={{ ...styles.summaryBox, borderColor: '#cdeed8' }}>
+            <strong style={{ color: '#2e7d32' }}>{getCoursFaits()}</strong>
+            <span style={{ color: '#2e7d32' }}>Cours faits</span>
+          </div>
+
+          <div style={{ ...styles.summaryBox, borderColor: '#f3c4c4' }}>
+            <strong style={{ color: '#d91e18' }}>{getCoursRates()}</strong>
+            <span style={{ color: '#d91e18' }}>Cours ratés</span>
+          </div>
+
+          <div style={styles.summaryBox}>
+            <strong>{getCoursNonPointes()}</strong>
+            <span>Non pointés</span>
+          </div>
+        </div>
       </div>
 
       <div style={styles.card}>
-        <h3>Détail des séances</h3>
+        <h3 style={styles.sectionTitle}>Cours ratés</h3>
 
-        {seances.length === 0 ? (
-          <p>Aucune séance pour ce centre.</p>
+        {getSeancesRatees().length === 0 ? (
+          <p style={styles.emptyText}>Aucun cours raté.</p>
         ) : (
-          seances.map((s) => (
-            <div key={s.id} style={styles.seanceItem}>
-              <strong>{s.chapitre}</strong>
-              <div>
-                {presences[s.id] === 'present'
-                  ? 'Présent'
-                  : presences[s.id] === 'absent'
-                  ? 'Absent'
-                  : 'Non pointé'}
+          getSeancesRatees().map((s) => (
+            <div
+              key={s.id}
+              style={{
+                ...styles.seanceItem,
+                borderColor: '#f3c4c4',
+                background: '#fff7f7',
+              }}
+            >
+              <strong style={{ color: '#d91e18' }}>{s.chapitre || '-'}</strong>
+              <div style={{ color: '#d91e18', marginTop: 8 }}>
+                Date : {formatDate(s.date_seance)}
+              </div>
+              <div style={{ color: '#d91e18', fontWeight: 'bold', marginTop: 6 }}>
+                Absent
               </div>
             </div>
           ))
+        )}
+      </div>
+
+      <div style={styles.card}>
+        <h3 style={styles.sectionTitle}>Détail des séances</h3>
+
+        {seances.length === 0 ? (
+          <p style={styles.emptyText}>Aucune séance pour ce centre.</p>
+        ) : (
+          seances.map((s) => {
+            const statut = presences[s.id]
+
+            return (
+              <div key={s.id} style={styles.seanceItem}>
+                <strong style={styles.seanceTitle}>{s.chapitre || '-'}</strong>
+                <div style={styles.seanceDate}>Date : {formatDate(s.date_seance)}</div>
+
+                <div
+                  style={
+                    statut === 'present'
+                      ? styles.statusPresent
+                      : statut === 'absent'
+                      ? styles.statusAbsent
+                      : styles.statusNeutral
+                  }
+                >
+                  {statut === 'present'
+                    ? 'Présent'
+                    : statut === 'absent'
+                    ? 'Absent'
+                    : 'Non pointé'}
+                </div>
+              </div>
+            )
+          })
         )}
       </div>
     </div>
@@ -307,6 +621,7 @@ const styles = {
     background: '#f7f1fb',
     minHeight: '100vh',
   },
+
   backButton: {
     marginBottom: 16,
     padding: '12px 16px',
@@ -314,22 +629,36 @@ const styles = {
     border: '2px solid #999',
     background: '#fff',
     fontWeight: 'bold',
+    color: '#2b0a78',
   },
+
   card: {
     background: '#fff',
-    border: '2px solid #ddd',
+    border: '2px solid #e3d8f5',
     borderRadius: 18,
     padding: 18,
     marginBottom: 20,
     boxShadow: '0 8px 20px rgba(43, 10, 120, 0.08)',
   },
+
   title: {
     marginTop: 0,
     marginBottom: 12,
     textAlign: 'center',
     fontSize: 34,
     fontWeight: 'bold',
+    wordBreak: 'break-word',
   },
+
+  sectionTitle: {
+    marginTop: 0,
+    marginBottom: 16,
+    color: '#6f5b84',
+    textAlign: 'center',
+    fontSize: 24,
+    fontWeight: 'bold',
+  },
+
   certBadge: {
     margin: '0 auto 16px',
     width: 'fit-content',
@@ -339,6 +668,7 @@ const styles = {
     color: '#fff',
     fontWeight: 'bold',
   },
+
   message: {
     marginTop: 14,
     fontWeight: 'bold',
@@ -346,28 +676,42 @@ const styles = {
     textAlign: 'center',
     fontSize: 18,
   },
-  qrBox: {
+
+  detailsGrid: {
     display: 'flex',
     flexDirection: 'column',
-    alignItems: 'center',
-    gap: 12,
+    gap: 10,
+    marginTop: 16,
   },
-  qrText: {
+
+  detailRow: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(130px, 42%) 1fr',
+    gap: 10,
+    alignItems: 'start',
+    paddingBottom: 8,
+    borderBottom: '1px solid #f0e6ff',
+  },
+
+  detailLabel: {
+    color: '#5f5473',
     fontWeight: 'bold',
-    fontSize: 18,
+    wordBreak: 'break-word',
   },
-  seanceItem: {
-    marginBottom: 8,
-    padding: 12,
-    border: '1px solid #ddd',
-    borderRadius: 12,
+
+  detailValue: {
+    color: '#333',
+    textAlign: 'left',
+    wordBreak: 'break-word',
   },
+
   actionRow: {
     display: 'flex',
     gap: 10,
     marginTop: 16,
     flexWrap: 'wrap',
   },
+
   whatsappButton: {
     flex: 1,
     minWidth: 140,
@@ -379,6 +723,7 @@ const styles = {
     fontWeight: 'bold',
     fontSize: 16,
   },
+
   callButton: {
     flex: 1,
     minWidth: 140,
@@ -390,6 +735,7 @@ const styles = {
     fontWeight: 'bold',
     fontSize: 16,
   },
+
   certButton: {
     flex: 1,
     minWidth: 160,
@@ -400,5 +746,124 @@ const styles = {
     color: '#1565c0',
     fontWeight: 'bold',
     fontSize: 16,
+  },
+
+  secondaryButton: {
+    flex: 1,
+    minWidth: 140,
+    padding: 14,
+    borderRadius: 14,
+    border: '2px solid #d8c8ef',
+    background: '#fff',
+    color: '#2b0a78',
+    fontWeight: 'bold',
+    fontSize: 16,
+  },
+
+  certificatBox: {
+    marginTop: 16,
+    padding: 14,
+    borderRadius: 14,
+    border: '2px solid #d8c8ef',
+    background: '#fbf8ff',
+  },
+
+  certificatTitle: {
+    marginTop: 0,
+    marginBottom: 10,
+    fontWeight: 'bold',
+    color: '#2b0a78',
+  },
+
+  input: {
+    width: '100%',
+    padding: 14,
+    marginBottom: 12,
+    borderRadius: 12,
+    border: '2px solid #d8c8ef',
+    fontSize: 16,
+    boxSizing: 'border-box',
+    background: '#fff',
+  },
+
+  qrBox: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: 12,
+  },
+
+  qrText: {
+    fontWeight: 'bold',
+    fontSize: 18,
+    color: '#2b0a78',
+  },
+
+  downloadButton: {
+    padding: '12px 16px',
+    borderRadius: 12,
+    border: 'none',
+    background: 'linear-gradient(90deg, #2b0a78 0%, #d4148e 100%)',
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 15,
+  },
+
+  summaryGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
+    gap: 10,
+  },
+
+  summaryBox: {
+    background: '#fbf8ff',
+    border: '1px solid #eadcf9',
+    borderRadius: 14,
+    padding: 16,
+    textAlign: 'center',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 6,
+    color: '#2b0a78',
+  },
+
+  seanceItem: {
+    marginBottom: 10,
+    padding: 14,
+    border: '1px solid #eadcf9',
+    borderRadius: 12,
+    background: '#fff',
+  },
+
+  seanceTitle: {
+    color: '#2b0a78',
+    display: 'block',
+    marginBottom: 8,
+    whiteSpace: 'pre-wrap',
+  },
+
+  seanceDate: {
+    color: '#666',
+    marginBottom: 8,
+  },
+
+  statusPresent: {
+    color: '#2e7d32',
+    fontWeight: 'bold',
+  },
+
+  statusAbsent: {
+    color: '#d91e18',
+    fontWeight: 'bold',
+  },
+
+  statusNeutral: {
+    color: '#777',
+    fontWeight: 'bold',
+  },
+
+  emptyText: {
+    textAlign: 'center',
+    color: '#555',
   },
 }
