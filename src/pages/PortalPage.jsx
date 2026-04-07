@@ -6,7 +6,7 @@ export default function PortalPage({ onEnter }) {
       <div style={styles.overlay}>
         <div style={styles.container}>
           <h1 style={styles.mainTitle}>
-            Les Écoles Universitaires de la Connaissance de JESUS-CHRIST,
+            Les Écoles et Universités de la Connaissance de JESUS-CHRIST,
             le Dieu Véritable
           </h1>
 
@@ -18,15 +18,20 @@ export default function PortalPage({ onEnter }) {
 
           <div style={styles.topSection}>
             <div style={styles.infoBox}>
+
               <p style={styles.infoText}>
-                Cours Bibliques Itinérants avec l’Apôtre de JESUS;<br />
-                Félicien-MALACHIE<br />
-                <strong>CHAR D’ISRAEL ET SA CAVALERIE.</strong><br />
-                Apôtre, Prédicateur et Docteur.<br />
-                Président mondial des Écoles et Universités de la Connaissance
-                de JESUS-CHRIST, le Dieu Véritable<br />
+                Cours bibliques non théologiques avec l'Apôtre, Prédicateur et Docteur de
+                JÉSUS-CHRIST,
+                <br />
+                <strong>Char d'Israël et sa Cavalerie</strong>,
+                <br />
+                Président mondial des Écoles et Universités de la Connaissance de
+                JÉSUS-CHRIST, le Dieu Véritable.
+                <br />
                 <em>(Jean 5:20)</em>
               </p>
+
+
             </div>
 
             <div style={styles.yearBox}>

@@ -6,7 +6,6 @@ const emptyClassForm = {
   annee: '1',
   pays: '',
   ville: '',
-  assistant_nom: '',
   assistant_code: '',
   assistant_password: '',
 }
@@ -70,7 +69,6 @@ export default function ClassesPage() {
       annee: Number(form.annee),
       pays: form.pays.trim(),
       ville: form.ville.trim(),
-      assistant_nom: form.assistant_nom.trim(),
       assistant_code: form.assistant_code.trim(),
       assistant_password: form.assistant_password.trim(),
     }
@@ -119,7 +117,6 @@ export default function ClassesPage() {
       annee: String(classe.annee || '1'),
       pays: classe.pays || '',
       ville: classe.ville || '',
-      assistant_nom: classe.assistant_nom || '',
       assistant_code: classe.assistant_code || '',
       assistant_password: classe.assistant_password || '',
     })
@@ -196,7 +193,6 @@ export default function ClassesPage() {
         String(classe.annee || ''),
         classe.pays,
         classe.ville,
-        classe.assistant_nom,
         classe.assistant_code,
         classe.assistant_password,
       ]
@@ -262,13 +258,6 @@ export default function ClassesPage() {
             onChange={handleChange}
           />
 
-          <input
-            style={styles.input}
-            name="assistant_nom"
-            placeholder="Nom de l'assistant"
-            value={form.assistant_nom}
-            onChange={handleChange}
-          />
 
           <input
             style={styles.input}
@@ -339,7 +328,6 @@ export default function ClassesPage() {
               <p style={styles.meta}>Année : {classe.annee}</p>
               <p style={styles.meta}>Pays : {classe.pays || '-'}</p>
               <p style={styles.meta}>Ville : {classe.ville || '-'}</p>
-              <p style={styles.meta}>Assistant : {classe.assistant_nom || '-'}</p>
               <p style={styles.meta}>Code assistant : {classe.assistant_code || '-'}</p>
               <p style={styles.meta}>Mot de passe assistant : {classe.assistant_password || '-'}</p>
 

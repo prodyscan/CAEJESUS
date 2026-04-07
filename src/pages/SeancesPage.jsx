@@ -393,6 +393,7 @@ export default function SeancesPage({ profile }) {
       <SeanceDetailPage
         seanceId={selectedSeanceId}
         onBack={closeSeanceDetail}
+        profile={profile}
       />
     )
   }

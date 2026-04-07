@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { Html5Qrcode } from 'html5-qrcode'
 import { supabase } from '../supabaseClient'
 
-export default function SeanceDetailPage({ seanceId, onBack }) {
+
+export default function SeanceDetailPage({ seanceId, onBack, profile }) {
   const [seance, setSeance] = useState(null)
   const [students, setStudents] = useState([])
   const [presences, setPresences] = useState({})
@@ -293,7 +294,8 @@ export default function SeanceDetailPage({ seanceId, onBack }) {
       class_id: seance.class_id,
       rapport: '',
       temoignage: temoignage.trim(),
-      redige_par: seance.classes?.assistant_nom || null,
+      redige_par: profile?.nom || profile?.assistant_nom || profile?.email || null,
+
     }
 
     const { data: existingReport, error: checkError } = await supabase
@@ -461,7 +463,7 @@ export default function SeanceDetailPage({ seanceId, onBack }) {
       temoignage?.trim() || 'Aucun témoignage enregistré',
       '',
       '*Nom de l’assistant:*',
-      `- ${seance?.classes?.assistant_nom || 'Non renseigné'}`,
+      `- ${profile?.nom || profile?.assistant_nom || profile?.email || 'Non renseigné'}`,
     ].join('\n')
   }
 
