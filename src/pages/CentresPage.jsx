@@ -43,9 +43,34 @@ export default function ClassesPage() {
     setForm((prev) => ({ ...prev, [name]: value }))
   }
 
+
   async function saveClass(e) {
     e.preventDefault()
     setMessage('')
+
+    const nomNettoye = form.nom.trim().toLowerCase()
+    const codeNettoye = form.assistant_code.trim()
+
+    const duplicate = classes.find((c) => {
+      if (editingId && String(c.id) === String(editingId)) return false
+
+      const sameNom = (c.nom || '').trim().toLowerCase() === nomNettoye
+      const sameCode = (c.assistant_code || '').trim() === codeNettoye
+
+      return sameNom || sameCode
+    })
+
+    if (duplicate) {
+      if ((duplicate.nom || '').trim().toLowerCase() === nomNettoye) {
+        setMessage('Ce centre existe déjà')
+        return
+      }
+
+      if ((duplicate.assistant_code || '').trim() === codeNettoye) {
+        setMessage('Ce code assistant existe déjà')
+        return
+      }
+    }
 
     if (!form.nom.trim()) {
       setMessage('Le nom du centre est obligatoire')
@@ -95,8 +120,15 @@ export default function ClassesPage() {
     if (error) {
       console.log(error)
 
-      if (error.message?.toLowerCase().includes('duplicate')) {
+      const errorMessage = error.message?.toLowerCase() || ''
+
+      if (errorMessage.includes('assistant_code')) {
         setMessage('Ce code assistant existe déjà')
+        return
+      }
+
+      if (errorMessage.includes('nom')) {
+        setMessage('Ce centre existe déjà')
         return
       }
 
@@ -274,6 +306,8 @@ export default function ClassesPage() {
             value={form.assistant_password}
             onChange={handleChange}
           />
+
+
 
           <button
             style={styles.primaryButtonFull}

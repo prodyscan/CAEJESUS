@@ -617,7 +617,7 @@ export default function StudentsPage({ profile }) {
           <input
             style={styles.input}
             name="telephone"
-            placeholder="Numéro principal"
+            placeholder="Numéro de téléphone"
             value={form.telephone}
             onChange={handleChange}
           />
@@ -625,11 +625,10 @@ export default function StudentsPage({ profile }) {
           <input
             style={styles.input}
             name="telephone_secondaire"
-            placeholder="Numéro secondaire (optionnel)"
+            placeholder="Numéro téléphonique 2"
             value={form.telephone_secondaire}
             onChange={handleChange}
           />
-
 
           <input
             style={styles.input}
