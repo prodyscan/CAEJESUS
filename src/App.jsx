@@ -10,6 +10,9 @@ import PaiementsPage from './pages/PaiementsPage'
 import BilansPage from './pages/BilansPage'
 import AssistantLoginPage from './pages/AssistantLoginPage'
 
+import RattrapagesPage from './pages/RattrapagesPage'
+
+
 import PortalPage from './pages/PortalPage'
 import LoginPage from './pages/LoginPage'
 import MainMenu from './components/MainMenu'
@@ -322,6 +325,11 @@ export default function App() {
     if (page === 'seances') {
       return <SeancesPage profile={activeProfile} />
     }
+  
+    if (page === 'rattrapages') {
+      return <RattrapagesPage profile={activeProfile} />
+    }
+
 
     if (page === 'paiements') {
       return <PaiementsPage profile={activeProfile} />

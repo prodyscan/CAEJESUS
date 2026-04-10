@@ -12,6 +12,8 @@ export default function MainMenu({ currentPage, onChangePage, profile, onLogout 
     { key: 'students', label: 'Étudiants' },
     { key: 'couples', label: 'Couples' },
     { key: 'seances', label: 'Séances' },
+    { key: 'rattrapages', label: 'Rattrapages' },
+
     { key: 'paiements', label: 'Paiements' },
 
     {

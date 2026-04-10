@@ -32,6 +32,16 @@ export default function HomePage({ onNavigate, profile, onLogout }) {
         ? 'Créer les séances et choisir le centre'
         : 'Gérer les séances de mon centre',
     },
+
+    {
+      key: 'rattrapages',
+      title: 'Rattrapages',
+      subtitle: isAdmin
+        ? 'Gérer les cours rattrapés'
+        : 'Rattraper les cours non faits',
+    },
+
+
     {
       key: 'paiements',
       title: 'Paiements',

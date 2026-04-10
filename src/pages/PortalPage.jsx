@@ -10,7 +10,7 @@ export default function PortalPage({ onEnter }) {
             le Dieu Véritable
           </h1>
 
-          <p style={styles.verse}>(Jean 5:20)</p>
+          <p style={styles.verse}>(1 Jean 5:20)</p>
 
           <div style={styles.presenceBox}>
             Liste de Présence effective aux cours

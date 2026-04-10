@@ -32,6 +32,7 @@ export default function PaiementsPage({ profile }) {
   const [filterClassId, setFilterClassId] = useState('all')
   const [searchPaiement, setSearchPaiement] = useState('')
   const [filterTypePaiement, setFilterTypePaiement] = useState('all')
+  const [openedFinanceDetail, setOpenedFinanceDetail] = useState(null)
 
   const isAdmin = profile?.role === 'admin'
   const assistantClassId =
@@ -96,9 +97,7 @@ export default function PaiementsPage({ profile }) {
   }
 
   async function getPresences() {
-    const { data, error } = await supabase
-      .from('presences')
-      .select('*')
+    const { data, error } = await supabase.from('presences').select('*')
 
     if (error) {
       console.log(error)
@@ -139,7 +138,6 @@ export default function PaiementsPage({ profile }) {
 
     return new Date(year, month, day)
   }
-
 
   async function getPaiements() {
     let query = supabase
@@ -579,7 +577,8 @@ export default function PaiementsPage({ profile }) {
     return filteredStudents.filter((student) => {
       if (!query) return true
 
-      const fullName = `${student.nom || ''} ${student.prenom || ''}`.toLowerCase()
+      const fullName =
+        `${student.nom || ''} ${student.prenom || ''}`.toLowerCase()
       const matricule = (student.matricule || '').toLowerCase()
 
       return fullName.includes(query) || matricule.includes(query)
@@ -705,6 +704,130 @@ export default function PaiementsPage({ profile }) {
     return getTotalInscriptions() + getTotalContributions()
   }
 
+  function getGlobalFinanceData() {
+    let inscriptionAttendu = 0
+    let contributionAttendu = 0
+
+    let inscriptionVerse = 0
+    let contributionVerse = 0
+
+    let inscriptionArrieree = 0
+    let contributionArrieree = 0
+
+    filteredStudents.forEach((student) => {
+      const id = student.id
+      inscriptionAttendu += Number(getStudentInscriptionExpected(id) || 0)
+      contributionAttendu += Number(getStudentContributionExpected(id) || 0)
+    })
+
+    getFilteredPaiementsByPeriod().forEach((p) => {
+      const montant = Number(p.montant || 0)
+
+      if (p.type_paiement === 'inscription') {
+        inscriptionVerse += montant
+      }
+
+      if (p.type_paiement === 'inscription_arrieree') {
+        inscriptionVerse += montant
+        inscriptionArrieree += montant
+      }
+
+      if (p.type_paiement === 'contribution') {
+        contributionVerse += montant
+      }
+
+      if (p.type_paiement === 'contribution_arrieree') {
+        contributionVerse += montant
+        contributionArrieree += montant
+      }
+    })
+
+    const inscriptionRestant = Math.max(inscriptionAttendu - inscriptionVerse, 0)
+    const contributionRestant = Math.max(
+      contributionAttendu - contributionVerse,
+      0
+    )
+
+    const inscriptionAvance = Math.max(inscriptionVerse - inscriptionAttendu, 0)
+    const contributionAvance = Math.max(
+      contributionVerse - contributionAttendu,
+      0
+    )
+
+    return {
+      inscription: {
+        attendu: inscriptionAttendu,
+        verse: inscriptionVerse,
+        restant: inscriptionRestant,
+        arrieree: inscriptionArrieree,
+        avance: inscriptionAvance,
+      },
+      contribution: {
+        attendu: contributionAttendu,
+        verse: contributionVerse,
+        restant: contributionRestant,
+        arrieree: contributionArrieree,
+        avance: contributionAvance,
+      },
+      total: {
+        attendu: inscriptionAttendu + contributionAttendu,
+        verse: inscriptionVerse + contributionVerse,
+        restant: inscriptionRestant + contributionRestant,
+        arrieree: inscriptionArrieree + contributionArrieree,
+        avance: inscriptionAvance + contributionAvance,
+      },
+    }
+  }
+
+  function getTotalBlocsCumules() {
+    return filteredStudents.reduce((sum, student) => {
+      const totalPresents = getStudentPresentCount(student.id)
+      const blocs = Math.floor(totalPresents / SEANCES_PAR_BLOC)
+      return sum + blocs
+    }, 0)
+  }
+
+  function getResumeDetailData(type) {
+    const data = getGlobalFinanceData()
+
+    if (type === 'inscriptions') {
+      return {
+        title: 'Détail Inscriptions',
+        nombreEtudiants: filteredStudents.length,
+        blocsCumules: getTotalBlocsCumules(),
+        attendu: data.inscription.attendu,
+        verse: data.inscription.verse,
+        restant: data.inscription.restant,
+        arrieree: data.inscription.arrieree,
+        avance: data.inscription.avance,
+      }
+    }
+
+    if (type === 'contributions') {
+      return {
+        title: 'Détail Contributions',
+        nombreEtudiants: filteredStudents.length,
+        blocsCumules: getTotalBlocsCumules(),
+        attendu: data.contribution.attendu,
+        verse: data.contribution.verse,
+        restant: data.contribution.restant,
+        arrieree: data.contribution.arrieree,
+        avance: data.contribution.avance,
+      }
+    }
+
+    return {
+      title: 'Détail Total général',
+      nombreEtudiants: filteredStudents.length,
+      blocsCumules: getTotalBlocsCumules(),
+      attendu: data.total.attendu,
+      verse: data.total.verse,
+      restant: data.total.restant,
+      arrieree: data.total.arrieree,
+      avance: data.total.avance,
+    }
+  }
+
   const selectedStudentInfo = useMemo(() => {
     return students.find((s) => s.id === form.student_id) || null
   }, [students, form.student_id])
@@ -725,7 +848,6 @@ export default function PaiementsPage({ profile }) {
 
   return (
     <div style={styles.page}>
-
       <div style={styles.card}>
         <h2 style={styles.title}>
           {editingId ? 'Modifier paiement' : 'Paiements'}
@@ -922,21 +1044,106 @@ export default function PaiementsPage({ profile }) {
         <p style={styles.fcfaNote}>Période : {getPeriodeLabel()}</p>
 
         <div style={styles.resumeGrid}>
-          <div style={styles.resumeBox}>
+          <button
+            type="button"
+            style={styles.resumeBoxButton}
+            onClick={() =>
+              setOpenedFinanceDetail(
+                openedFinanceDetail === 'inscriptions' ? null : 'inscriptions'
+              )
+            }
+          >
             <strong>{getTotalInscriptions()}</strong>
             <span>Inscriptions</span>
-          </div>
+          </button>
 
-          <div style={styles.resumeBox}>
+          <button
+            type="button"
+            style={styles.resumeBoxButton}
+            onClick={() =>
+              setOpenedFinanceDetail(
+                openedFinanceDetail === 'contributions' ? null : 'contributions'
+              )
+            }
+          >
             <strong>{getTotalContributions()}</strong>
             <span>Contributions</span>
-          </div>
+          </button>
 
-          <div style={styles.resumeBox}>
+          <button
+            type="button"
+            style={styles.resumeBoxButton}
+            onClick={() =>
+              setOpenedFinanceDetail(
+                openedFinanceDetail === 'total' ? null : 'total'
+              )
+            }
+          >
             <strong>{getTotalGeneral()}</strong>
             <span>Total général</span>
-          </div>
+          </button>
         </div>
+
+        {openedFinanceDetail && (
+          <div style={styles.financeDetailCard}>
+            {(() => {
+              const resumeDetail = getResumeDetailData(openedFinanceDetail)
+
+              return (
+                <>
+                  <h4 style={styles.financeDetailTitle}>{resumeDetail.title}</h4>
+
+                  <div style={styles.detailFinanceRow}>
+                    <span>Nombre d’étudiants</span>
+                    <span>{resumeDetail.nombreEtudiants}</span>
+                  </div>
+
+                  <div style={styles.detailFinanceRow}>
+                    <span>Nombre de blocs cumulés</span>
+                    <span>{resumeDetail.blocsCumules}</span>
+                  </div>
+
+                  <p style={styles.fcfaNote}>4 séances = 1 mois</p>
+
+                  <div style={styles.detailFinanceRow}>
+                    <span>Montant attendu</span>
+                    <span style={styles.amountBlack}>
+                      {resumeDetail.attendu} FCFA
+                    </span>
+                  </div>
+
+                  <div style={styles.detailFinanceRow}>
+                    <span>Montant versé</span>
+                    <span style={styles.amountGreen}>
+                      {resumeDetail.verse} FCFA
+                    </span>
+                  </div>
+
+                  <div style={styles.detailFinanceRow}>
+                    <span>Montant restant</span>
+                    <span style={styles.amountRed}>
+                      {resumeDetail.restant} FCFA
+                    </span>
+                  </div>
+
+                  <div style={styles.detailFinanceRow}>
+                    <span>Arriérée</span>
+                    <span style={styles.amountPurple}>
+                      {resumeDetail.arrieree} FCFA
+                    </span>
+                  </div>
+
+                  <div style={styles.detailFinanceRow}>
+                    <span>Avance</span>
+                    <span style={styles.amountBlue}>
+                      {resumeDetail.avance} FCFA
+                    </span>
+                  </div>
+                </>
+              )
+            })()}
+          </div>
+        )}
 
         <p style={styles.fcfaNote}>Montants en FCFA</p>
       </div>
@@ -947,7 +1154,9 @@ export default function PaiementsPage({ profile }) {
           style={styles.toggleSectionButton}
           onClick={() => setShowEtatEtudiants((prev) => !prev)}
         >
-          {showEtatEtudiants ? 'Masquer état des étudiants' : 'Afficher état des étudiants'}
+          {showEtatEtudiants
+            ? 'Masquer état des étudiants'
+            : 'Afficher état des étudiants'}
         </button>
 
         {showEtatEtudiants && (
@@ -1022,8 +1231,6 @@ export default function PaiementsPage({ profile }) {
           </>
         )}
       </div>
-
-
 
       <div style={styles.card}>
         <h3 style={styles.sectionTitle}>Liste des paiements</h3>
@@ -1108,6 +1315,7 @@ const styles = {
     boxSizing: 'border-box',
     overflowX: 'hidden',
   },
+
   card: {
     background: '#ffffff',
     border: '2px solid #e3d8f5',
@@ -1118,6 +1326,7 @@ const styles = {
     boxSizing: 'border-box',
     overflow: 'hidden',
   },
+
   title: {
     marginTop: 0,
     marginBottom: 16,
@@ -1126,6 +1335,7 @@ const styles = {
     fontSize: 32,
     fontWeight: 'bold',
   },
+
   sectionTitle: {
     marginTop: 0,
     marginBottom: 16,
@@ -1133,6 +1343,7 @@ const styles = {
     textAlign: 'center',
     fontSize: 24,
   },
+
   input: {
     width: '100%',
     padding: 14,
@@ -1143,6 +1354,7 @@ const styles = {
     boxSizing: 'border-box',
     background: '#fff',
   },
+
   textarea: {
     width: '100%',
     minHeight: 100,
@@ -1155,6 +1367,7 @@ const styles = {
     resize: 'vertical',
     background: '#fff',
   },
+
   infoPanel: {
     background: '#fbf8ff',
     border: '1px solid #eadcf9',
@@ -1162,11 +1375,13 @@ const styles = {
     padding: 14,
     marginBottom: 12,
   },
+
   infoLine: {
     margin: '6px 0',
     color: '#555',
     wordBreak: 'break-word',
   },
+
   itemCard: {
     border: '1px solid #eadcf9',
     borderRadius: 14,
@@ -1176,17 +1391,20 @@ const styles = {
     boxSizing: 'border-box',
     overflow: 'hidden',
   },
+
   studentName: {
     color: '#2b0a78',
     fontSize: 20,
     wordBreak: 'break-word',
   },
+
   row: {
     display: 'flex',
     gap: 10,
     marginTop: 12,
     flexWrap: 'wrap',
   },
+
   primaryButton: {
     padding: '10px 14px',
     borderRadius: 10,
@@ -1198,6 +1416,7 @@ const styles = {
     flex: 1,
     minWidth: 120,
   },
+
   dangerButton: {
     padding: '10px 14px',
     borderRadius: 10,
@@ -1209,6 +1428,7 @@ const styles = {
     flex: 1,
     minWidth: 120,
   },
+
   primaryButtonFull: {
     width: '100%',
     padding: 14,
@@ -1220,6 +1440,7 @@ const styles = {
     fontWeight: 'bold',
     marginBottom: 10,
   },
+
   secondaryButtonFull: {
     width: '100%',
     padding: 14,
@@ -1230,11 +1451,13 @@ const styles = {
     fontSize: 16,
     fontWeight: 'bold',
   },
+
   meta: {
     margin: '6px 0',
     color: '#666',
     wordBreak: 'break-word',
   },
+
   message: {
     marginTop: 14,
     fontWeight: 'bold',
@@ -1242,13 +1465,15 @@ const styles = {
     textAlign: 'center',
     fontSize: 18,
   },
+
   resumeGrid: {
     display: 'grid',
     gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
     gap: 10,
     width: '100%',
   },
-  resumeBox: {
+
+  resumeBoxButton: {
     background: '#fbf8ff',
     border: '1px solid #eadcf9',
     borderRadius: 14,
@@ -1262,13 +1487,70 @@ const styles = {
     minWidth: 0,
     wordBreak: 'break-word',
     boxSizing: 'border-box',
+    width: '100%',
+    cursor: 'pointer',
   },
+
+  financeDetailCard: {
+    marginTop: 16,
+    background: '#fbf8ff',
+    border: '1px solid #eadcf9',
+    borderRadius: 16,
+    padding: 16,
+  },
+
+  financeDetailTitle: {
+    marginTop: 0,
+    marginBottom: 14,
+    textAlign: 'center',
+    color: '#2b0a78',
+    fontSize: 22,
+    fontWeight: 'bold',
+  },
+
+  detailFinanceRow: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 12,
+    padding: '10px 0',
+    borderBottom: '1px solid #eadcf9',
+    color: '#555',
+    fontWeight: 'bold',
+  },
+
+  amountBlack: {
+    color: '#222',
+    fontWeight: 'bold',
+  },
+
+  amountGreen: {
+    color: '#1b8f3a',
+    fontWeight: 'bold',
+  },
+
+  amountRed: {
+    color: '#d91e18',
+    fontWeight: 'bold',
+  },
+
+  amountPurple: {
+    color: '#8a3fd1',
+    fontWeight: 'bold',
+  },
+
+  amountBlue: {
+    color: '#1565c0',
+    fontWeight: 'bold',
+  },
+
   fcfaNote: {
     textAlign: 'center',
     marginTop: 12,
     color: '#6f5b84',
     fontStyle: 'italic',
   },
+
   arriereeNote: {
     margin: '6px 0',
     padding: '8px 10px',
@@ -1279,6 +1561,7 @@ const styles = {
     textAlign: 'center',
     border: '1px solid #f3d19c',
   },
+
   toggleSectionButton: {
     width: '100%',
     padding: 14,
@@ -1290,5 +1573,4 @@ const styles = {
     fontWeight: 'bold',
     marginBottom: 10,
   },
-
 }

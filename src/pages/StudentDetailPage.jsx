@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import { supabase } from '../supabaseClient'
 
@@ -9,6 +9,7 @@ const SEANCES_PAR_BLOC = 4
 export default function StudentDetailPage({ studentId, onBack, profile }) {
   const [student, setStudent] = useState(null)
   const [seances, setSeances] = useState([])
+  const [rattrapages, setRattrapages] = useState([])
   const [presences, setPresences] = useState({})
   const [paiements, setPaiements] = useState([])
   const [message, setMessage] = useState('')
@@ -21,6 +22,11 @@ export default function StudentDetailPage({ studentId, onBack, profile }) {
 
   useEffect(() => {
     loadData()
+  }, [studentId])
+
+  useEffect(() => {
+    if (!studentId) return
+    fetchRattrapages()
   }, [studentId])
 
   async function loadData() {
@@ -74,6 +80,83 @@ export default function StudentDetailPage({ studentId, onBack, profile }) {
       .eq('student_id', studentId)
 
     setPaiements(paiementsData || [])
+  }
+
+  async function fetchRattrapages() {
+    const { data: rattrapagesData, error: rattrapagesError } = await supabase
+      .from('rattrapages')
+      .select('*')
+      .eq('student_id', studentId)
+
+    if (!rattrapagesError) {
+      setRattrapages(rattrapagesData || [])
+    }
+  }
+
+  function countCoursesInSeance(chapitreText) {
+    if (!chapitreText) return 0
+
+    return String(chapitreText)
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean).length
+  }
+
+  const coursRates = useMemo(() => {
+    const absences = Object.entries(presences)
+      .filter(([_, statut]) => statut === 'absent')
+      .map(([seance_id]) => ({ seance_id }))
+
+    const lignes = []
+
+    absences.forEach((absence) => {
+      const dejaRattrape = rattrapages.some(
+        (r) => String(r.seance_id) === String(absence.seance_id)
+      )
+
+      if (dejaRattrape) return
+
+      const seance = seances.find(
+        (s) => String(s.id) === String(absence.seance_id)
+      )
+      if (!seance) return
+
+      const chapitres = String(seance.chapitre || '')
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+
+      if (chapitres.length === 0) {
+        lignes.push({
+          seanceId: seance.id,
+          date: seance.date_seance || '-',
+          chapitre: '-',
+        })
+      } else {
+        chapitres.forEach((chapitre, index) => {
+          lignes.push({
+            seanceId: `${seance.id}-${index}`,
+            date: seance.date_seance || '-',
+            chapitre,
+          })
+        })
+      }
+    })
+
+    return lignes
+  }, [presences, seances, rattrapages])
+
+  function getCourseCardStyle(seanceId) {
+    const estRattrape = rattrapages.some(
+      (r) => String(r.seance_id) === String(seanceId)
+    )
+
+    const statut = presences[seanceId]
+
+    if (estRattrape) return styles.courseCaughtUpCard
+    if (statut === 'present') return styles.courseDoneCard
+    if (statut === 'absent') return styles.courseMissedCard
+    return styles.courseCard
   }
 
   function formatPhoneForLink(phone) {
@@ -174,15 +257,35 @@ export default function StudentDetailPage({ studentId, onBack, profile }) {
   }
 
   function getCoursFaits() {
-    return Object.values(presences).filter((v) => v === 'present').length
+    return seances.reduce((sum, seance) => {
+      if (presences[seance.id] !== 'present') return sum
+      return sum + countCoursesInSeance(seance.chapitre)
+    }, 0)
   }
 
   function getCoursRates() {
-    return Object.values(presences).filter((v) => v === 'absent').length
+    return seances.reduce((sum, seance) => {
+      if (presences[seance.id] !== 'absent') return sum
+      return sum + countCoursesInSeance(seance.chapitre)
+    }, 0)
   }
 
   function getCoursNonPointes() {
-    return seances.length - getCoursFaits() - getCoursRates()
+    return seances.reduce((sum, seance) => {
+      if (
+        presences[seance.id] === 'present' ||
+        presences[seance.id] === 'absent'
+      ) {
+        return sum
+      }
+      return sum + countCoursesInSeance(seance.chapitre)
+    }, 0)
+  }
+
+  function getTotalCours() {
+    return seances.reduce((sum, seance) => {
+      return sum + countCoursesInSeance(seance.chapitre)
+    }, 0)
   }
 
   function getSeancesRatees() {
@@ -360,7 +463,9 @@ export default function StudentDetailPage({ studentId, onBack, profile }) {
 
           <div style={styles.detailRow}>
             <span style={styles.detailLabel}>Téléphone secondaire</span>
-            <span style={styles.detailValue}>{student.telephone_secondaire || '-'}</span>
+            <span style={styles.detailValue}>
+              {student.telephone_secondaire || '-'}
+            </span>
           </div>
 
           <div style={styles.detailRow}>
@@ -370,7 +475,9 @@ export default function StudentDetailPage({ studentId, onBack, profile }) {
 
           <div style={styles.detailRow}>
             <span style={styles.detailLabel}>Date de naissance</span>
-            <span style={styles.detailValue}>{formatDate(student.date_naissance)}</span>
+            <span style={styles.detailValue}>
+              {formatDate(student.date_naissance)}
+            </span>
           </div>
 
           <div style={styles.detailRow}>
@@ -526,8 +633,8 @@ export default function StudentDetailPage({ studentId, onBack, profile }) {
 
         <div style={styles.summaryGrid}>
           <div style={styles.summaryBox}>
-            <strong>{seances.length}</strong>
-            <span>Total séances</span>
+            <strong>{getTotalCours()}</strong>
+            <span>Total cours</span>
           </div>
 
           <div style={{ ...styles.summaryBox, borderColor: '#cdeed8' }}>
@@ -548,25 +655,61 @@ export default function StudentDetailPage({ studentId, onBack, profile }) {
       </div>
 
       <div style={styles.card}>
+        <h3 style={styles.sectionTitle}>Cours rattrapés</h3>
+
+        {rattrapages.length === 0 ? (
+          <p>Aucun cours rattrapé.</p>
+        ) : (
+          rattrapages.map((item) => {
+            const seance = seances.find(
+              (s) => String(s.id) === String(item.seance_id)
+            )
+
+            return (
+              <div key={item.id} style={styles.courseCard}>
+                <strong style={styles.courseTitle}>
+                  {item.chapitre_label || seance?.chapitre || '-'}
+                </strong>
+
+                <p style={styles.meta}>
+                  Date séance ratée : {seance?.date_seance || '-'}
+                </p>
+
+                <p style={styles.coursRattrape}>
+                  Rattrapé le : {item.date_rattrapage}
+                </p>
+              </div>
+            )
+          })
+        )}
+      </div>
+
+      <div style={styles.card}>
         <h3 style={styles.sectionTitle}>Cours ratés</h3>
 
-        {getSeancesRatees().length === 0 ? (
+        {coursRates.length === 0 ? (
           <p style={styles.emptyText}>Aucun cours raté.</p>
         ) : (
-          getSeancesRatees().map((s) => (
+          coursRates.map((item) => (
             <div
-              key={s.id}
+              key={item.seanceId}
               style={{
                 ...styles.seanceItem,
                 borderColor: '#f3c4c4',
                 background: '#fff7f7',
               }}
             >
-              <strong style={{ color: '#d91e18' }}>{s.chapitre || '-'}</strong>
+              <strong style={{ color: '#d91e18' }}>{item.chapitre || '-'}</strong>
               <div style={{ color: '#d91e18', marginTop: 8 }}>
-                Date : {formatDate(s.date_seance)}
+                Date : {formatDate(item.date)}
               </div>
-              <div style={{ color: '#d91e18', fontWeight: 'bold', marginTop: 6 }}>
+              <div
+                style={{
+                  color: '#d91e18',
+                  fontWeight: 'bold',
+                  marginTop: 6,
+                }}
+              >
                 Absent
               </div>
             </div>
@@ -584,20 +727,24 @@ export default function StudentDetailPage({ studentId, onBack, profile }) {
             const statut = presences[s.id]
 
             return (
-              <div key={s.id} style={styles.seanceItem}>
+              <div key={s.id} style={getCourseCardStyle(s.id)}>
                 <strong style={styles.seanceTitle}>{s.chapitre || '-'}</strong>
                 <div style={styles.seanceDate}>Date : {formatDate(s.date_seance)}</div>
 
                 <div
                   style={
-                    statut === 'present'
-                      ? styles.statusPresent
+                    rattrapages.some((r) => String(r.seance_id) === String(s.id))
+                      ? styles.coursRattrape
+                      : statut === 'present'
+                      ? styles.coursSuivi
                       : statut === 'absent'
-                      ? styles.statusAbsent
+                      ? styles.coursRate
                       : styles.statusNeutral
                   }
                 >
-                  {statut === 'present'
+                  {rattrapages.some((r) => String(r.seance_id) === String(s.id))
+                    ? 'Rattrapé'
+                    : statut === 'present'
                     ? 'Présent'
                     : statut === 'absent'
                     ? 'Absent'
@@ -657,6 +804,12 @@ const styles = {
     textAlign: 'center',
     fontSize: 24,
     fontWeight: 'bold',
+  },
+
+  courseTitle: {
+    color: '#2b0a78',
+    fontSize: 18,
+    whiteSpace: 'pre-wrap',
   },
 
   certBadge: {
@@ -865,5 +1018,58 @@ const styles = {
   emptyText: {
     textAlign: 'center',
     color: '#555',
+  },
+
+  courseCard: {
+    border: '1px solid #eadcf9',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 12,
+    background: '#fff',
+  },
+
+  courseDoneCard: {
+    border: '2px solid #2e7d32',
+    background: '#eef8f0',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 12,
+  },
+
+  courseMissedCard: {
+    border: '2px solid #d91e18',
+    background: '#fff1f1',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 12,
+  },
+
+  courseCaughtUpCard: {
+    border: '2px solid #1565c0',
+    background: '#eef5ff',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 12,
+  },
+
+  coursSuivi: {
+    color: '#2e7d32',
+    fontWeight: 'bold',
+  },
+
+  coursRate: {
+    color: '#d91e18',
+    fontWeight: 'bold',
+  },
+
+  coursRattrape: {
+    color: '#1565c0',
+    fontWeight: 'bold',
+  },
+
+  meta: {
+    margin: '6px 0',
+    color: '#666',
+    wordBreak: 'break-word',
   },
 }
