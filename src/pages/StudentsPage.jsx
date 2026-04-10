@@ -153,6 +153,13 @@ export default function StudentsPage({ profile }) {
     setOpenMenuId(null)
   }
 
+  function getAnneeLabel(annee) {
+    const n = Number(annee)
+
+    if (n === 1) return '1ère année'
+    return `${n}ème année`
+  }
+
   function callStudent(phone) {
     const cleanPhone = formatPhoneForLink(phone)
     if (!cleanPhone) {
@@ -588,7 +595,7 @@ export default function StudentsPage({ profile }) {
               <option value="">Choisir un centre</option>
               {classes.map((c) => (
                 <option key={c.id} value={c.id}>
-                  {c.nom} - {c.annee}ère année
+                  {c.nom} - {getAnneeLabel(c.annee)}
                 </option>
               ))}
             </select>
