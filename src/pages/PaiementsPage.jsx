@@ -593,6 +593,12 @@ export default function PaiementsPage({ profile }) {
     getClasses()
   }
 
+  function getAnneeLabel(annee) {
+    const n = Number(annee)
+    if (n === 1) return '1ère année'
+    return `${n}ème année`
+  }
+
   function getStudentLabel(student) {
     return `${student.nom || ''} ${student.prenom || ''}${
       student.matricule ? ' - ' + student.matricule : ''
@@ -912,7 +918,8 @@ export default function PaiementsPage({ profile }) {
               <option value="all">Tous les centres</option>
               {classes.map((classe) => (
                 <option key={classe.id} value={classe.id}>
-                  {classe.nom} - {classe.annee}ère année
+                  {classe.nom} - {getAnneeLabel(classe.annee)}
+
                 </option>
               ))}
             </select>

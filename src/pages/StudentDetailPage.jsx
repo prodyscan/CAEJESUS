@@ -182,14 +182,18 @@ export default function StudentDetailPage({ studentId, onBack, profile }) {
     const lignes = []
 
     seances.forEach((seance) => {
+      const statut = presences[seance.id]
+      const estPresent = statut === 'present'
+      const estAbsent = statut === 'absent'
       const estAvantEntree = isSeanceBeforeStudentEntry(seance)
-      const estAbsent = presences[seance.id] === 'absent'
       const estRattrape = rattrapages.some(
         (r) => String(r.seance_id) === String(seance.id)
       )
 
-      if (estRattrape) return
-      if (!estAvantEntree && !estAbsent) return
+      if (estPresent || estRattrape) return
+
+      const estRate = estAbsent || (!statut && estAvantEntree)
+      if (!estRate) return
 
       const chapitres = String(seance.chapitre || '')
         .split('\n')
@@ -198,18 +202,14 @@ export default function StudentDetailPage({ studentId, onBack, profile }) {
 
       if (chapitres.length === 0) {
         lignes.push({
-          seanceId: estAvantEntree
-            ? `before-entry-${seance.id}`
-            : String(seance.id),
+          seanceId: `${seance.id}-0`,
           date: seance.date_seance || '-',
           chapitre: '-',
         })
       } else {
         chapitres.forEach((chapitre, index) => {
           lignes.push({
-            seanceId: estAvantEntree
-              ? `before-entry-${seance.id}-${index}`
-              : `${seance.id}-${index}`,
+            seanceId: `${seance.id}-${index}`,
             date: seance.date_seance || '-',
             chapitre,
           })
@@ -218,7 +218,8 @@ export default function StudentDetailPage({ studentId, onBack, profile }) {
     })
 
     return lignes
-  }, [seances, presences, rattrapages, student])
+  }, [presences, seances, rattrapages, student])
+
 
   function getCourseCardStyle(seanceId, seance) {
     const estRattrape = rattrapages.some(
@@ -331,6 +332,7 @@ export default function StudentDetailPage({ studentId, onBack, profile }) {
     loadData()
   }
 
+
   function getCoursFaits() {
     const coursPresents = seances.reduce((sum, seance) => {
       if (presences[seance.id] === 'present') {
@@ -346,15 +348,19 @@ export default function StudentDetailPage({ studentId, onBack, profile }) {
 
   function getCoursRates() {
     return seances.reduce((sum, seance) => {
-      const estAbsent = presences[seance.id] === 'absent'
+      const statut = presences[seance.id]
+      const estPresent = statut === 'present'
+      const estAbsent = statut === 'absent'
       const estAvantEntree = isSeanceBeforeStudentEntry(seance)
       const estRattrape = rattrapages.some(
         (r) => String(r.seance_id) === String(seance.id)
       )
 
-      if (estRattrape) return sum
+      if (estPresent || estRattrape) {
+        return sum
+      }
 
-      if (estAbsent || estAvantEntree) {
+      if (estAbsent || (!statut && estAvantEntree)) {
         return sum + countCoursesInSeance(seance.chapitre)
       }
 
@@ -362,22 +368,24 @@ export default function StudentDetailPage({ studentId, onBack, profile }) {
     }, 0)
   }
 
+
   function getCoursNonPointes() {
     return seances.reduce((sum, seance) => {
+      const estPresent = presences[seance.id] === 'present'
+      const estAbsent = presences[seance.id] === 'absent'
       const estAvantEntree = isSeanceBeforeStudentEntry(seance)
-      const statut = presences[seance.id]
       const estRattrape = rattrapages.some(
         (r) => String(r.seance_id) === String(seance.id)
       )
 
-      if (estAvantEntree) return sum
-      if (estRattrape) return sum
-      if (statut === 'present') return sum
-      if (statut === 'absent') return sum
+      if (estAvantEntree || estRattrape || estPresent || estAbsent) {
+        return sum
+      }
 
       return sum + countCoursesInSeance(seance.chapitre)
     }, 0)
   }
+
 
   function getAncienValideTransfert() {
     const valeurEnregistree = Number(
@@ -988,15 +996,24 @@ export default function StudentDetailPage({ studentId, onBack, profile }) {
           <p style={styles.emptyText}>Aucune séance pour ce centre.</p>
         ) : (
           seances.map((s) => {
+
             const estRattrape = rattrapages.some(
               (r) => String(r.seance_id) === String(s.id)
             )
 
+            const presenceStatut = presences[s.id]
+            const estAvantEntree = isSeanceBeforeStudentEntry(s)
+
             const statut = estRattrape
               ? 'rattrape'
-              : isSeanceBeforeStudentEntry(s)
+              : presenceStatut === 'present'
+              ? 'present'
+              : presenceStatut === 'absent'
               ? 'absent'
-              : presences[s.id] || 'non_pointe'
+              : estAvantEntree
+              ? 'absent'
+              : 'non_pointe'
+
 
             return (
               <div key={s.id} style={getCourseCardStyle(s.id, s)}>

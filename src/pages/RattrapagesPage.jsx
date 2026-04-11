@@ -165,6 +165,36 @@ export default function RattrapagesPage({ profile }) {
     }
   }
 
+  function toDateOnly(value) {
+    if (!value) return null
+
+    const text = String(value).slice(0, 10)
+    const parts = text.split('-')
+
+    if (parts.length !== 3) return null
+
+    const year = Number(parts[0])
+    const month = Number(parts[1])
+    const day = Number(parts[2])
+
+    if (!year || !month || !day) return null
+
+    return new Date(year, month - 1, day, 0, 0, 0, 0)
+  }
+
+  function isSeanceBeforeStudentEntry(student, seance) {
+    if (!student || !seance) return false
+
+    const entryDate = toDateOnly(
+      student.date_ajout_etudiant || student.created_at
+    )
+    const seanceDate = toDateOnly(seance.date_seance)
+
+    if (!entryDate || !seanceDate) return false
+
+    return seanceDate.getTime() < entryDate.getTime()
+  }
+
   const filteredStudents = useMemo(() => {
     let result = students
 
@@ -202,15 +232,28 @@ export default function RattrapagesPage({ profile }) {
       (p) => String(p.student_id) === String(selectedStudent.id)
     )
 
-    const absences = studentPresences.filter((p) => p.statut === 'absent')
+    const presenceMap = {}
+    studentPresences.forEach((p) => {
+      presenceMap[p.seance_id] = p.statut
+    })
 
-    absences.forEach((absence) => {
-      const seance = seances.find(
-        (s) => String(s.id) === String(absence.seance_id)
+    const seancesDuCentre = seances
+      .filter(
+        (s) => String(s.class_id) === String(selectedStudent.class_id)
       )
-      if (!seance) return
+      .sort((a, b) => {
+        const da = new Date(a.date_seance || 0).getTime()
+        const db = new Date(b.date_seance || 0).getTime()
+        return da - db
+      })
 
+    seancesDuCentre.forEach((seance) => {
       const classe = getClassById(seance.class_id)
+      const statut = presenceMap[seance.id]
+      const estAbsent = statut === 'absent'
+      const estAvantEntree = isSeanceBeforeStudentEntry(selectedStudent, seance)
+
+      if (!estAbsent && !estAvantEntree) return
 
       const chapitres = String(seance.chapitre || '')
         .split('\n')
@@ -227,7 +270,7 @@ export default function RattrapagesPage({ profile }) {
 
         if (!dejaRattrape) {
           lignes.push({
-            id: `absence-${seance.id}-0`,
+            id: `${estAvantEntree ? 'avant-entree' : 'absence'}-${seance.id}-0`,
             seance_id: seance.id,
             chapitre_index: 0,
             chapitre: '-',
@@ -235,7 +278,7 @@ export default function RattrapagesPage({ profile }) {
             numero_seance: seance.numero_seance || '-',
             class_name: classe?.nom || '-',
             annee: classe?.annee || '-',
-            origine: 'absence',
+            origine: estAvantEntree ? 'avant_entree' : 'absence',
           })
         }
 
@@ -247,13 +290,13 @@ export default function RattrapagesPage({ profile }) {
           (r) =>
             String(r.student_id) === String(selectedStudent.id) &&
             String(r.seance_id) === String(seance.id) &&
-            String(r.chapitre_index) === String(index)
+            String(r.chapitre_index || 0) === String(index)
         )
 
         if (dejaRattrape) return
 
         lignes.push({
-          id: `absence-${seance.id}-${index}`,
+          id: `${estAvantEntree ? 'avant-entree' : 'absence'}-${seance.id}-${index}`,
           seance_id: seance.id,
           chapitre_index: index,
           chapitre,
@@ -261,7 +304,7 @@ export default function RattrapagesPage({ profile }) {
           numero_seance: seance.numero_seance || '-',
           class_name: classe?.nom || '-',
           annee: classe?.annee || '-',
-          origine: 'absence',
+          origine: estAvantEntree ? 'avant_entree' : 'absence',
         })
       })
     })
@@ -270,16 +313,6 @@ export default function RattrapagesPage({ profile }) {
       const ancienValide = Number(
         selectedStudent.seances_validees_avant_transfert || 0
       )
-
-      const seancesDuCentre = seances
-        .filter(
-          (s) => String(s.class_id) === String(selectedStudent.class_id)
-        )
-        .sort((a, b) => {
-          const da = new Date(a.date_seance || 0).getTime()
-          const db = new Date(b.date_seance || 0).getTime()
-          return da - db
-        })
 
       const tousLesCoursCentre = []
 
@@ -582,6 +615,10 @@ export default function RattrapagesPage({ profile }) {
                       {item.origine === 'transfert' ? (
                         <p style={styles.coursTransfert}>
                           Cours manquant après transfert
+                        </p>
+                      ) : item.origine === 'avant_entree' ? (
+                        <p style={styles.coursTransfert}>
+                          Cours fait avant l&apos;ajout de l&apos;étudiant
                         </p>
                       ) : (
                         <p style={styles.coursRate}>Cours raté</p>
