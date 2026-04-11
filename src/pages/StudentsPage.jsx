@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+
 import { supabase } from '../supabaseClient'
 import StudentDetailPage from './StudentDetailPage'
 
@@ -34,6 +35,7 @@ export default function StudentsPage({ profile }) {
   const [certificatStudentId, setCertificatStudentId] = useState(null)
   const [certificatDate, setCertificatDate] = useState('')
   const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 })
+  const certificatBoxRef = useRef(null)
 
   const isAdmin = profile?.role === 'admin'
   const assistantClassId =
@@ -43,6 +45,49 @@ export default function StudentsPage({ profile }) {
     getClasses()
     getStudents()
   }, [profile])
+
+  function countCoursesInSeance(chapitreText) {
+    if (!chapitreText) return 0
+
+    return String(chapitreText)
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean).length
+  }
+
+  async function getValidatedCoursesBeforeTransfer(studentId, classId) {
+    const { data: presencesData, error: presencesError } = await supabase
+      .from('presences')
+      .select('seance_id, statut')
+      .eq('student_id', studentId)
+      .eq('statut', 'present')
+
+    if (presencesError) {
+      console.log(presencesError)
+      return 0
+    }
+
+    const { data: seancesData, error: seancesError } = await supabase
+      .from('seances')
+      .select('id, chapitre, class_id')
+      .eq('class_id', classId)
+
+    if (seancesError) {
+      console.log(seancesError)
+      return 0
+    }
+
+    const seanceMap = {}
+    ;(seancesData || []).forEach((s) => {
+      seanceMap[s.id] = s
+    })
+
+    return (presencesData || []).reduce((sum, presence) => {
+      const seance = seanceMap[presence.seance_id]
+      if (!seance) return sum
+      return sum + countCoursesInSeance(seance.chapitre)
+    }, 0)
+  }
 
   async function getClasses() {
     let query = supabase
@@ -70,7 +115,7 @@ export default function StudentsPage({ profile }) {
       .from('students')
       .select(`
         *,
-        classes (
+        classes!students_class_id_fkey (
           nom,
           annee
         )
@@ -101,35 +146,32 @@ export default function StudentsPage({ profile }) {
   }
 
   function handleDateTextChange(e) {
-    const value = e.target.value
+    let value = e.target.value.replace(/\D/g, '')
+
+    if (value.length > 8) value = value.slice(0, 8)
+
+    let formatted = value
+
+    if (value.length >= 3 && value.length <= 4) {
+      formatted = `${value.slice(0, 2)}-${value.slice(2)}`
+    } else if (value.length >= 5) {
+      formatted = `${value.slice(0, 2)}-${value.slice(2, 4)}-${value.slice(4)}`
+    }
+
+    let isoDate = ''
+
+    if (value.length === 8) {
+      const day = value.slice(0, 2)
+      const month = value.slice(2, 4)
+      const year = value.slice(4, 8)
+      isoDate = `${year}-${month}-${day}`
+    }
 
     setForm((prev) => ({
       ...prev,
-      date_naissance_text: value,
+      date_naissance_text: formatted,
+      date_naissance: isoDate,
     }))
-
-    const cleaned = value.trim()
-
-    const matchFr = cleaned.match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
-    if (matchFr) {
-      const [, day, month, year] = matchFr
-      setForm((prev) => ({
-        ...prev,
-        date_naissance_text: value,
-        date_naissance: `${year}-${month}-${day}`,
-      }))
-      return
-    }
-
-    const matchIso = cleaned.match(/^(\d{4})-(\d{2})-(\d{2})$/)
-    if (matchIso) {
-      const [, year, month, day] = matchIso
-      setForm((prev) => ({
-        ...prev,
-        date_naissance_text: value,
-        date_naissance: `${year}-${month}-${day}`,
-      }))
-    }
   }
 
   function generateMatricule() {
@@ -155,7 +197,6 @@ export default function StudentsPage({ profile }) {
 
   function getAnneeLabel(annee) {
     const n = Number(annee)
-
     if (n === 1) return '1ère année'
     return `${n}ème année`
   }
@@ -210,8 +251,14 @@ export default function StudentsPage({ profile }) {
     )
     setOpenMenuId(null)
     setMessage('Choisis la date de réception du certificat')
-  }
 
+    setTimeout(() => {
+      certificatBoxRef.current?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      })
+    }, 150)
+  }
   async function confirmCertificat() {
     if (!certificatStudentId || !certificatDate) {
       setMessage('Choisis la date de réception du certificat')
@@ -275,8 +322,7 @@ export default function StudentsPage({ profile }) {
       if (editingId && String(s.id) === String(editingId)) return false
 
       const sameTelephone =
-        telephoneNettoye &&
-        (s.telephone || '').trim() === telephoneNettoye
+        telephoneNettoye && (s.telephone || '').trim() === telephoneNettoye
 
       const sameTelephoneSecondaire =
         telephoneSecondaireNettoye &&
@@ -350,6 +396,37 @@ export default function StudentsPage({ profile }) {
       return
     }
 
+    let transfertData = {}
+
+    if (editingId) {
+      const currentStudent = students.find(
+        (s) => String(s.id) === String(editingId)
+      )
+
+      const newClassId = String(finalClassId || '')
+      const oldClassId = String(currentStudent?.class_id || '')
+
+      const centreChanged =
+        currentStudent &&
+        oldClassId &&
+        newClassId &&
+        oldClassId !== newClassId
+
+      if (centreChanged) {
+        const validatedCourses = await getValidatedCoursesBeforeTransfer(
+          currentStudent.id,
+          currentStudent.class_id
+        )
+
+        transfertData = {
+          ancien_class_id: currentStudent.class_id,
+          seances_validees_avant_transfert: validatedCourses,
+          date_transfert: new Date().toISOString().slice(0, 10),
+          est_transfere: true,
+        }
+      }
+    }
+
     const payload = {
       nom: form.nom.trim(),
       prenom: form.prenom.trim(),
@@ -368,6 +445,7 @@ export default function StudentsPage({ profile }) {
       lieu_naissance: form.lieu_naissance || '',
       date_ajout_etudiant:
         form.date_ajout_etudiant || new Date().toISOString().slice(0, 10),
+      ...transfertData,
     }
 
     let error = null
@@ -388,9 +466,11 @@ export default function StudentsPage({ profile }) {
     }
 
     if (error) {
-      console.log(error)
+      console.log('Erreur Supabase saveStudent:', error)
       setMessage(
-        editingId ? 'Erreur modification étudiant' : 'Erreur ajout étudiant'
+        editingId
+          ? `Erreur modification étudiant : ${error.message || 'inconnue'}`
+          : `Erreur ajout étudiant : ${error.message || 'inconnue'}`
       )
       return
     }
@@ -420,7 +500,7 @@ export default function StudentsPage({ profile }) {
       email: student.email || '',
       date_naissance: student.date_naissance || '',
       date_naissance_text: student.date_naissance
-        ? `${student.date_naissance.slice(8, 10)}/${student.date_naissance.slice(5, 7)}/${student.date_naissance.slice(0, 4)}`
+        ? `${student.date_naissance.slice(8, 10)}-${student.date_naissance.slice(5, 7)}-${student.date_naissance.slice(0, 4)}`
         : '',
       lieu_naissance: student.lieu_naissance || '',
       date_ajout_etudiant: student.date_ajout_etudiant || '',
@@ -428,6 +508,10 @@ export default function StudentsPage({ profile }) {
 
     setMessage('')
     setOpenMenuId(null)
+    window.scrollTo({
+      top: 0,
+      behavior: 'smooth',
+    })
   }
 
   function cancelEdit() {
@@ -637,7 +721,6 @@ export default function StudentsPage({ profile }) {
             onChange={handleChange}
           />
 
-
           <input
             style={styles.input}
             name="email"
@@ -652,7 +735,7 @@ export default function StudentsPage({ profile }) {
             name="date_naissance_text"
             type="text"
             inputMode="numeric"
-            placeholder="Date de naissance (ex: 15/08/1993)"
+            placeholder="Date de naissance (ex: 10-04-2000)"
             value={form.date_naissance_text}
             onChange={handleDateTextChange}
           />
@@ -761,7 +844,7 @@ export default function StudentsPage({ profile }) {
         <h3 style={styles.sectionTitle}>Liste</h3>
 
         {isAdmin && certificatStudentId && (
-          <div style={styles.certificatBox}>
+          <div ref={certificatBoxRef} style={styles.certificatBox}>
             <p style={styles.certificatTitle}>
               Date de réception du certificat
             </p>

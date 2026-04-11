@@ -15,6 +15,7 @@ export default function StudentDetailPage({ studentId, onBack, profile }) {
   const [message, setMessage] = useState('')
   const [showCertificatForm, setShowCertificatForm] = useState(false)
   const [certificatDate, setCertificatDate] = useState('')
+  const [ancienCoursValidesCalcules, setAncienCoursValidesCalcules] = useState(0)
 
   const qrWrapperRef = useRef(null)
 
@@ -31,12 +32,13 @@ export default function StudentDetailPage({ studentId, onBack, profile }) {
 
   async function loadData() {
     setMessage('')
+    setAncienCoursValidesCalcules(0)
 
     const { data: studentData, error: studentError } = await supabase
       .from('students')
       .select(`
         *,
-        classes (
+        classes!students_class_id_fkey (
           id,
           nom,
           annee
@@ -80,6 +82,27 @@ export default function StudentDetailPage({ studentId, onBack, profile }) {
       .eq('student_id', studentId)
 
     setPaiements(paiementsData || [])
+
+    if (studentData.est_transfere && studentData.ancien_class_id) {
+      const { data: anciennesSeancesData, error: anciennesSeancesError } = await supabase
+        .from('seances')
+        .select('id, chapitre')
+        .eq('class_id', studentData.ancien_class_id)
+
+      if (anciennesSeancesError) {
+        console.log(anciennesSeancesError)
+      } else {
+        let totalAncienValide = 0
+
+        ;(anciennesSeancesData || []).forEach((seance) => {
+          if (map[seance.id] === 'present') {
+            totalAncienValide += countCoursesInSeance(seance.chapitre)
+          }
+        })
+
+        setAncienCoursValidesCalcules(totalAncienValide)
+      }
+    }
   }
 
   async function fetchRattrapages() {
@@ -102,24 +125,34 @@ export default function StudentDetailPage({ studentId, onBack, profile }) {
       .filter(Boolean).length
   }
 
-  const coursRates = useMemo(() => {
-    const absences = Object.entries(presences)
-      .filter(([_, statut]) => statut === 'absent')
-      .map(([seance_id]) => ({ seance_id }))
+  function isSeanceBeforeStudentEntry(seance) {
+    if (!student || !seance || !student.date_ajout_etudiant || !seance.date_seance) {
+      return false
+    }
 
+    const seanceDate = new Date(seance.date_seance)
+    const ajoutDate = new Date(student.date_ajout_etudiant)
+
+    seanceDate.setHours(0, 0, 0, 0)
+    ajoutDate.setHours(0, 0, 0, 0)
+
+    return seanceDate < ajoutDate
+  }
+
+  const coursRates = useMemo(() => {
     const lignes = []
 
-    absences.forEach((absence) => {
+    seances.forEach((seance) => {
+      const statut = presences[seance.id]
+      const estRate = statut === 'absent' || (!statut && isSeanceBeforeStudentEntry(seance))
+
+      if (!estRate) return
+
       const dejaRattrape = rattrapages.some(
-        (r) => String(r.seance_id) === String(absence.seance_id)
+        (r) => String(r.seance_id) === String(seance.id)
       )
 
       if (dejaRattrape) return
-
-      const seance = seances.find(
-        (s) => String(s.id) === String(absence.seance_id)
-      )
-      if (!seance) return
 
       const chapitres = String(seance.chapitre || '')
         .split('\n')
@@ -128,7 +161,7 @@ export default function StudentDetailPage({ studentId, onBack, profile }) {
 
       if (chapitres.length === 0) {
         lignes.push({
-          seanceId: seance.id,
+          seanceId: `${seance.id}-0`,
           date: seance.date_seance || '-',
           chapitre: '-',
         })
@@ -144,18 +177,19 @@ export default function StudentDetailPage({ studentId, onBack, profile }) {
     })
 
     return lignes
-  }, [presences, seances, rattrapages])
+  }, [presences, seances, rattrapages, student])
 
-  function getCourseCardStyle(seanceId) {
+  function getCourseCardStyle(seanceId, seance) {
     const estRattrape = rattrapages.some(
       (r) => String(r.seance_id) === String(seanceId)
     )
 
     const statut = presences[seanceId]
+    const estRateParAjout = !statut && isSeanceBeforeStudentEntry(seance)
 
     if (estRattrape) return styles.courseCaughtUpCard
     if (statut === 'present') return styles.courseDoneCard
-    if (statut === 'absent') return styles.courseMissedCard
+    if (statut === 'absent' || estRateParAjout) return styles.courseMissedCard
     return styles.courseCard
   }
 
@@ -204,7 +238,6 @@ export default function StudentDetailPage({ studentId, onBack, profile }) {
 
   async function confirmCertificat() {
     if (!student) return
-
     if (!certificatDate) {
       setMessage('Choisis la date de réception du certificat')
       return
@@ -258,28 +291,64 @@ export default function StudentDetailPage({ studentId, onBack, profile }) {
 
   function getCoursFaits() {
     return seances.reduce((sum, seance) => {
-      if (presences[seance.id] !== 'present') return sum
-      return sum + countCoursesInSeance(seance.chapitre)
+      if (presences[seance.id] === 'present') {
+        return sum + countCoursesInSeance(seance.chapitre)
+      }
+      return sum
     }, 0)
   }
 
   function getCoursRates() {
     return seances.reduce((sum, seance) => {
-      if (presences[seance.id] !== 'absent') return sum
-      return sum + countCoursesInSeance(seance.chapitre)
+      const statut = presences[seance.id]
+
+      if (statut === 'absent') {
+        return sum + countCoursesInSeance(seance.chapitre)
+      }
+
+      if (!statut && isSeanceBeforeStudentEntry(seance)) {
+        return sum + countCoursesInSeance(seance.chapitre)
+      }
+
+      return sum
     }, 0)
   }
 
   function getCoursNonPointes() {
     return seances.reduce((sum, seance) => {
-      if (
-        presences[seance.id] === 'present' ||
-        presences[seance.id] === 'absent'
-      ) {
-        return sum
+      const statut = presences[seance.id]
+
+      if (!statut && !isSeanceBeforeStudentEntry(seance)) {
+        return sum + countCoursesInSeance(seance.chapitre)
       }
-      return sum + countCoursesInSeance(seance.chapitre)
+
+      return sum
     }, 0)
+  }
+
+  function getAncienValideTransfert() {
+    const valeurEnregistree = Number(student?.seances_validees_avant_transfert || 0)
+
+    if (valeurEnregistree > 0) return valeurEnregistree
+    return Number(ancienCoursValidesCalcules || 0)
+  }
+
+  function getResumeTransfert() {
+    const ancienValide = getAncienValideTransfert()
+    const nouveauFait = getTotalCours()
+    const rattrapagesValides = getNombreRattrapagesValides()
+
+    const rattrapageBrut = Math.max(nouveauFait - ancienValide, 0)
+    const rattrapageRestant = Math.max(rattrapageBrut - rattrapagesValides, 0)
+
+    return {
+      ancienValide,
+      nouveauFait,
+      seancesReconues: Math.min(ancienValide + rattrapagesValides, nouveauFait),
+      surplusIgnore: Math.max(ancienValide - nouveauFait, 0),
+      rattrapagesValides,
+      rattrapage: rattrapageRestant,
+    }
   }
 
   function getTotalCours() {
@@ -288,8 +357,60 @@ export default function StudentDetailPage({ studentId, onBack, profile }) {
     }, 0)
   }
 
+  function getNombreRattrapagesValides() {
+    return rattrapages.length
+  }
+
+  function getResumePresenceAffiche() {
+    if (!student) {
+      return {
+        totalCours: 0,
+        coursReconus: 0,
+        coursRates: 0,
+        rattrapage: 0,
+        surplusIgnore: 0,
+      }
+    }
+
+    if (student.est_transfere) {
+      const ancienValide = getAncienValideTransfert()
+      const totalCours = getTotalCours()
+      const rattrapagesValides = getNombreRattrapagesValides()
+
+      const coursReconus = Math.min(
+        ancienValide + rattrapagesValides,
+        totalCours
+      )
+
+      const rattrapageRestant = Math.max(totalCours - coursReconus, 0)
+
+      return {
+        totalCours,
+        coursReconus,
+        coursRates: 0,
+        rattrapage: rattrapageRestant,
+        surplusIgnore: Math.max(ancienValide - totalCours, 0),
+      }
+    }
+
+    return {
+      totalCours: getTotalCours(),
+      coursReconus: getCoursFaits(),
+      coursRates: getCoursRates(),
+      rattrapage: getCoursNonPointes(),
+      surplusIgnore: 0,
+    }
+  }
+
   function getSeancesRatees() {
-    return seances.filter((s) => presences[s.id] === 'absent')
+    return seances.filter((s) => {
+      const statut = presences[s.id]
+
+      if (statut === 'absent') return true
+      if (!statut && isSeanceBeforeStudentEntry(s)) return true
+
+      return false
+    })
   }
 
   function getInscriptionPaid() {
@@ -366,7 +487,6 @@ export default function StudentDetailPage({ studentId, onBack, profile }) {
         ctx.fillRect(0, 0, canvas.width, canvas.height)
 
         ctx.drawImage(img, 80, 40, 440, 440)
-
         ctx.fillStyle = '#2b0a78'
         ctx.font = 'bold 28px Arial'
         ctx.textAlign = 'center'
@@ -409,9 +529,16 @@ export default function StudentDetailPage({ studentId, onBack, profile }) {
           ← Retour
         </button>
         <p>Chargement...</p>
+        {message ? <p style={styles.message}>{message}</p> : null}
       </div>
     )
   }
+
+  const resumeTransfert = student.est_transfere
+    ? getResumeTransfert()
+    : null
+
+  const resumePresenceAffiche = getResumePresenceAffiche()
 
   return (
     <div style={styles.page}>
@@ -633,29 +760,74 @@ export default function StudentDetailPage({ studentId, onBack, profile }) {
 
         <div style={styles.summaryGrid}>
           <div style={styles.summaryBox}>
-            <strong>{getTotalCours()}</strong>
+            <strong>{resumePresenceAffiche.totalCours}</strong>
             <span>Total cours</span>
           </div>
 
           <div style={{ ...styles.summaryBox, borderColor: '#cdeed8' }}>
-            <strong style={{ color: '#2e7d32' }}>{getCoursFaits()}</strong>
-            <span style={{ color: '#2e7d32' }}>Cours faits</span>
+            <strong style={{ color: '#2e7d32' }}>{resumePresenceAffiche.coursReconus}</strong>
+            <span style={{ color: '#2e7d32' }}>
+              {student.est_transfere ? 'Cours reconnus' : 'Cours faits'}
+            </span>
           </div>
 
           <div style={{ ...styles.summaryBox, borderColor: '#f3c4c4' }}>
-            <strong style={{ color: '#d91e18' }}>{getCoursRates()}</strong>
+            <strong style={{ color: '#d91e18' }}>{resumePresenceAffiche.coursRates}</strong>
             <span style={{ color: '#d91e18' }}>Cours ratés</span>
           </div>
 
           <div style={styles.summaryBox}>
-            <strong>{getCoursNonPointes()}</strong>
-            <span>Non pointés</span>
+            <strong>{resumePresenceAffiche.rattrapage}</strong>
+            <span>{student.est_transfere ? 'À rattraper' : 'Non pointés'}</span>
           </div>
         </div>
       </div>
 
+      {student.est_transfere && resumeTransfert && (
+        <div style={styles.card}>
+          <h3 style={styles.sectionTitle}>Résumé transfert</h3>
+
+          <p>
+            <strong>Séances validées ancien centre :</strong>{' '}
+            {resumeTransfert.ancienValide}
+          </p>
+
+          <p>
+            <strong>Séances faites nouveau centre :</strong>{' '}
+            {resumeTransfert.nouveauFait}
+          </p>
+
+          <p>
+            <strong>Séances reconnues :</strong>{' '}
+            {resumeTransfert.seancesReconues}
+          </p>
+
+          <p>
+            <strong>Surplus ignoré :</strong>{' '}
+            {resumeTransfert.surplusIgnore}
+          </p>
+
+          <p>
+            <strong>Rattrapages validés :</strong>{' '}
+            {resumeTransfert.rattrapagesValides}
+          </p>
+
+          <p>
+            <strong>Cours à rattraper :</strong>{' '}
+            {resumeTransfert.rattrapage}
+          </p>
+
+          <p>
+            <strong>Date transfert :</strong>{' '}
+            {student.date_transfert || '-'}
+          </p>
+        </div>
+      )}
+
       <div style={styles.card}>
-        <h3 style={styles.sectionTitle}>Cours rattrapés</h3>
+        <h3 style={styles.sectionTitle}>
+          {student.est_transfere ? 'Rattrapages déjà effectués' : 'Cours rattrapés'}
+        </h3>
 
         {rattrapages.length === 0 ? (
           <p>Aucun cours rattrapé.</p>
@@ -700,9 +872,11 @@ export default function StudentDetailPage({ studentId, onBack, profile }) {
               }}
             >
               <strong style={{ color: '#d91e18' }}>{item.chapitre || '-'}</strong>
+
               <div style={{ color: '#d91e18', marginTop: 8 }}>
                 Date : {formatDate(item.date)}
               </div>
+
               <div
                 style={{
                   color: '#d91e18',
@@ -725,28 +899,32 @@ export default function StudentDetailPage({ studentId, onBack, profile }) {
         ) : (
           seances.map((s) => {
             const statut = presences[s.id]
+            const estRateParAjout = !statut && isSeanceBeforeStudentEntry(s)
+            const estRattrape = rattrapages.some(
+              (r) => String(r.seance_id) === String(s.id)
+            )
 
             return (
-              <div key={s.id} style={getCourseCardStyle(s.id)}>
+              <div key={s.id} style={getCourseCardStyle(s.id, s)}>
                 <strong style={styles.seanceTitle}>{s.chapitre || '-'}</strong>
                 <div style={styles.seanceDate}>Date : {formatDate(s.date_seance)}</div>
 
                 <div
                   style={
-                    rattrapages.some((r) => String(r.seance_id) === String(s.id))
+                    estRattrape
                       ? styles.coursRattrape
                       : statut === 'present'
                       ? styles.coursSuivi
-                      : statut === 'absent'
+                      : statut === 'absent' || estRateParAjout
                       ? styles.coursRate
                       : styles.statusNeutral
                   }
                 >
-                  {rattrapages.some((r) => String(r.seance_id) === String(s.id))
+                  {estRattrape
                     ? 'Rattrapé'
                     : statut === 'present'
                     ? 'Présent'
-                    : statut === 'absent'
+                    : statut === 'absent' || estRateParAjout
                     ? 'Absent'
                     : 'Non pointé'}
                 </div>

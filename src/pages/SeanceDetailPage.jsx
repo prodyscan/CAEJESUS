@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react'
 import { Html5Qrcode } from 'html5-qrcode'
 import { supabase } from '../supabaseClient'
 
-
 export default function SeanceDetailPage({ seanceId, onBack, profile }) {
   const [seance, setSeance] = useState(null)
   const [students, setStudents] = useState([])
@@ -30,7 +29,7 @@ export default function SeanceDetailPage({ seanceId, onBack, profile }) {
   }, [seanceId])
 
   useEffect(() => {
-    if (pointageMode === 'qr') {
+    if (pointageMode === 'qr' && !seance?.cloturee) {
       startQrScanner()
     } else {
       stopQrScanner()
@@ -39,7 +38,7 @@ export default function SeanceDetailPage({ seanceId, onBack, profile }) {
     return () => {
       stopQrScanner()
     }
-  }, [pointageMode, students.length])
+  }, [pointageMode, students.length, seance?.cloturee])
 
   async function loadData() {
     setMessage('')
@@ -138,15 +137,18 @@ export default function SeanceDetailPage({ seanceId, onBack, profile }) {
 
   function findStudentByMatricule(code) {
     const searchCode = normalizeText(code)
-
     return students.find(
       (student) => normalizeText(student.matricule) === searchCode
     )
   }
 
   async function markPresence(studentId, statut) {
-    setMessage('')
+    if (seance?.cloturee) {
+      setMessage('Cette séance est clôturée. Réouvre-la pour modifier les présences.')
+      return false
+    }
 
+    setMessage('')
     const { error } = await supabase
       .from('presences')
       .upsert(
@@ -171,6 +173,11 @@ export default function SeanceDetailPage({ seanceId, onBack, profile }) {
   async function markByMatricule(e) {
     e.preventDefault()
 
+    if (seance?.cloturee) {
+      setMessage('Cette séance est clôturée. Réouvre-la pour pointer.')
+      return
+    }
+
     const code = matriculeInput.trim()
 
     if (!code) {
@@ -193,6 +200,11 @@ export default function SeanceDetailPage({ seanceId, onBack, profile }) {
   }
 
   async function handleQrScan(decodedText) {
+    if (seance?.cloturee) {
+      setMessage('Cette séance est clôturée. Réouvre-la pour pointer.')
+      return
+    }
+
     const code = decodedText.trim()
     if (!code) return
 
@@ -222,6 +234,7 @@ export default function SeanceDetailPage({ seanceId, onBack, profile }) {
   }
 
   async function startQrScanner() {
+    if (seance?.cloturee) return
     if (qrScannerRef.current) return
     if (!students.length) return
 
@@ -285,7 +298,6 @@ export default function SeanceDetailPage({ seanceId, onBack, profile }) {
 
   async function saveRapport() {
     if (!seance) return
-
     setLoadingRapport(true)
     setMessage('')
 
@@ -295,7 +307,6 @@ export default function SeanceDetailPage({ seanceId, onBack, profile }) {
       rapport: '',
       temoignage: temoignage.trim(),
       redige_par: profile?.nom || profile?.assistant_nom || profile?.email || null,
-
     }
 
     const { data: existingReport, error: checkError } = await supabase
@@ -548,7 +559,6 @@ export default function SeanceDetailPage({ seanceId, onBack, profile }) {
         <button type="button" style={styles.backButton} onClick={onBack}>
           ← Retour aux séances
         </button>
-
         <h2 style={styles.title}>Détail séance</h2>
 
         <div style={styles.infoBox}>
@@ -556,7 +566,17 @@ export default function SeanceDetailPage({ seanceId, onBack, profile }) {
           <p><strong>Centre :</strong> {seance.classes?.nom || '-'}</p>
           <p><strong>Année :</strong> {seance.classes?.annee || '-'}</p>
           <p><strong>Date :</strong> {seance.date_seance || '-'}</p>
+          <p>
+            <strong>Statut :</strong>{' '}
+            {seance.cloturee ? 'Clôturée' : 'Ouverte'}
+          </p>
         </div>
+
+        {seance.cloturee && (
+          <div style={styles.closedNotice}>
+            Cette séance est clôturée. Réouvre-la pour modifier les présences.
+          </div>
+        )}
 
         {message ? <p style={styles.message}>{message}</p> : null}
       </div>
@@ -600,8 +620,13 @@ export default function SeanceDetailPage({ seanceId, onBack, profile }) {
                 placeholder="Entrer le matricule"
                 value={matriculeInput}
                 onChange={(e) => setMatriculeInput(e.target.value)}
+                disabled={seance.cloturee}
               />
-              <button style={styles.primaryButtonFull} type="submit">
+              <button
+                style={styles.primaryButtonFull}
+                type="submit"
+                disabled={seance.cloturee}
+              >
                 Valider présence
               </button>
             </form>
@@ -616,6 +641,12 @@ export default function SeanceDetailPage({ seanceId, onBack, profile }) {
               Présente le QR de l’étudiant devant la caméra.
             </p>
 
+            {seance.cloturee ? (
+              <p style={styles.cameraError}>
+                Séance clôturée. Le scan QR est désactivé.
+              </p>
+            ) : null}
+
             {startingCamera ? (
               <p style={styles.cameraInfo}>Démarrage caméra...</p>
             ) : null}
@@ -624,7 +655,7 @@ export default function SeanceDetailPage({ seanceId, onBack, profile }) {
               <p style={styles.cameraError}>{cameraError}</p>
             ) : null}
 
-            <div id="qr-reader" style={styles.qrReader} />
+            {!seance.cloturee && <div id="qr-reader" style={styles.qrReader} />}
 
             <button
               type="button"
@@ -633,6 +664,7 @@ export default function SeanceDetailPage({ seanceId, onBack, profile }) {
                 await stopQrScanner()
                 await startQrScanner()
               }}
+              disabled={seance.cloturee}
             >
               Redémarrer la caméra
             </button>
@@ -648,6 +680,7 @@ export default function SeanceDetailPage({ seanceId, onBack, profile }) {
               placeholder="Rechercher nom ou matricule..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
+              disabled={seance.cloturee}
             />
 
             {filteredStudents.length === 0 ? (
@@ -679,6 +712,7 @@ export default function SeanceDetailPage({ seanceId, onBack, profile }) {
                         type="button"
                         style={statut === 'present' ? styles.presentActive : styles.presentButton}
                         onClick={() => markPresence(student.id, 'present')}
+                        disabled={seance.cloturee}
                       >
                         Présent
                       </button>
@@ -687,6 +721,7 @@ export default function SeanceDetailPage({ seanceId, onBack, profile }) {
                         type="button"
                         style={statut === 'absent' ? styles.absentActive : styles.absentButton}
                         onClick={() => markPresence(student.id, 'absent')}
+                        disabled={seance.cloturee}
                       >
                         Absent
                       </button>
@@ -900,6 +935,16 @@ const styles = {
     lineHeight: 1.7,
     textAlign: 'center',
     boxSizing: 'border-box',
+  },
+  closedNotice: {
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 12,
+    background: '#fff4e5',
+    border: '1px solid #f3d19c',
+    color: '#b26a00',
+    fontWeight: 'bold',
+    textAlign: 'center',
   },
   message: {
     marginTop: 14,

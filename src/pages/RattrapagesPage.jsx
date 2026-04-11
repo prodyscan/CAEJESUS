@@ -81,14 +81,7 @@ export default function RattrapagesPage({ profile }) {
   async function getStudents() {
     let query = supabase
       .from('students')
-      .select(`
-        *,
-        classes (
-          id,
-          nom,
-          annee
-        )
-      `)
+      .select('*')
       .order('nom', { ascending: true })
 
     if (!isAdmin && assistantClassId) {
@@ -109,15 +102,8 @@ export default function RattrapagesPage({ profile }) {
   async function getSeances() {
     let query = supabase
       .from('seances')
-      .select(`
-        *,
-        classes (
-          id,
-          nom,
-          annee
-        )
-      `)
-      .order('date_seance', { ascending: false })
+      .select('*')
+      .order('date_seance', { ascending: true })
 
     if (!isAdmin && assistantClassId) {
       query = query.eq('class_id', assistantClassId)
@@ -163,12 +149,17 @@ export default function RattrapagesPage({ profile }) {
     setRattrapages(data || [])
   }
 
+  function getClassById(classId) {
+    return classes.find((c) => String(c.id) === String(classId)) || null
+  }
+
   function handleChange(e) {
     const { name, value } = e.target
     setForm((prev) => ({
       ...prev,
       [name]: value,
     }))
+
     if (name === 'student_id') {
       setSelectedCoursIds([])
     }
@@ -205,19 +196,21 @@ export default function RattrapagesPage({ profile }) {
   const coursARattraper = useMemo(() => {
     if (!selectedStudent) return []
 
+    const lignes = []
+
     const studentPresences = presences.filter(
       (p) => String(p.student_id) === String(selectedStudent.id)
     )
 
     const absences = studentPresences.filter((p) => p.statut === 'absent')
 
-    const lignes = []
-
     absences.forEach((absence) => {
       const seance = seances.find(
         (s) => String(s.id) === String(absence.seance_id)
       )
       if (!seance) return
+
+      const classe = getClassById(seance.class_id)
 
       const chapitres = String(seance.chapitre || '')
         .split('\n')
@@ -234,14 +227,15 @@ export default function RattrapagesPage({ profile }) {
 
         if (!dejaRattrape) {
           lignes.push({
-            id: `${seance.id}-0`,
+            id: `absence-${seance.id}-0`,
             seance_id: seance.id,
             chapitre_index: 0,
             chapitre: '-',
             date_seance: seance.date_seance || '-',
             numero_seance: seance.numero_seance || '-',
-            class_name: seance.classes?.nom || '-',
-            annee: seance.classes?.annee || '-',
+            class_name: classe?.nom || '-',
+            annee: classe?.annee || '-',
+            origine: 'absence',
           })
         }
 
@@ -259,20 +253,101 @@ export default function RattrapagesPage({ profile }) {
         if (dejaRattrape) return
 
         lignes.push({
-          id: `${seance.id}-${index}`,
+          id: `absence-${seance.id}-${index}`,
           seance_id: seance.id,
           chapitre_index: index,
           chapitre,
           date_seance: seance.date_seance || '-',
           numero_seance: seance.numero_seance || '-',
-          class_name: seance.classes?.nom || '-',
-          annee: seance.classes?.annee || '-',
+          class_name: classe?.nom || '-',
+          annee: classe?.annee || '-',
+          origine: 'absence',
         })
       })
     })
 
+    if (selectedStudent.est_transfere) {
+      const ancienValide = Number(
+        selectedStudent.seances_validees_avant_transfert || 0
+      )
+
+      const seancesDuCentre = seances
+        .filter(
+          (s) => String(s.class_id) === String(selectedStudent.class_id)
+        )
+        .sort((a, b) => {
+          const da = new Date(a.date_seance || 0).getTime()
+          const db = new Date(b.date_seance || 0).getTime()
+          return da - db
+        })
+
+      const tousLesCoursCentre = []
+
+      seancesDuCentre.forEach((seance) => {
+        const classe = getClassById(seance.class_id)
+
+        const chapitres = String(seance.chapitre || '')
+          .split('\n')
+          .map((line) => line.trim())
+          .filter(Boolean)
+
+        if (chapitres.length === 0) {
+          tousLesCoursCentre.push({
+            id: `transfert-${seance.id}-0`,
+            seance_id: seance.id,
+            chapitre_index: 0,
+            chapitre: '-',
+            date_seance: seance.date_seance || '-',
+            numero_seance: seance.numero_seance || '-',
+            class_name: classe?.nom || '-',
+            annee: classe?.annee || '-',
+            origine: 'transfert',
+          })
+          return
+        }
+
+        chapitres.forEach((chapitre, index) => {
+          tousLesCoursCentre.push({
+            id: `transfert-${seance.id}-${index}`,
+            seance_id: seance.id,
+            chapitre_index: index,
+            chapitre,
+            date_seance: seance.date_seance || '-',
+            numero_seance: seance.numero_seance || '-',
+            class_name: classe?.nom || '-',
+            annee: classe?.annee || '-',
+            origine: 'transfert',
+          })
+        })
+      })
+
+      const coursManquantsTransfert = tousLesCoursCentre.slice(ancienValide)
+
+      coursManquantsTransfert.forEach((item) => {
+        const dejaRattrape = rattrapages.some(
+          (r) =>
+            String(r.student_id) === String(selectedStudent.id) &&
+            String(r.seance_id) === String(item.seance_id) &&
+            String(r.chapitre_index || 0) === String(item.chapitre_index || 0)
+        )
+
+        if (dejaRattrape) return
+
+        const dejaDansListe = lignes.some(
+          (ligne) =>
+            String(ligne.seance_id) === String(item.seance_id) &&
+            String(ligne.chapitre_index || 0) ===
+              String(item.chapitre_index || 0)
+        )
+
+        if (dejaDansListe) return
+
+        lignes.push(item)
+      })
+    }
+
     return lignes
-  }, [selectedStudent, presences, seances, rattrapages])
+  }, [selectedStudent, presences, seances, rattrapages, classes])
 
   const historiqueRattrapages = useMemo(() => {
     return rattrapages
@@ -439,7 +514,8 @@ export default function RattrapagesPage({ profile }) {
                 {selectedStudent.prenom}
               </p>
               <p>
-                <strong>Centre :</strong> {selectedStudent.classes?.nom || '-'}
+                <strong>Centre :</strong>{' '}
+                {getClassById(selectedStudent.class_id)?.nom || '-'}
               </p>
               <p>
                 <strong>Matricule :</strong> {selectedStudent.matricule || '-'}
@@ -467,7 +543,7 @@ export default function RattrapagesPage({ profile }) {
             <h3 style={styles.sectionTitle}>Cours à rattraper</h3>
 
             {!selectedStudent ? (
-              <p>Choisis un étudiant pour voir ses cours ratés.</p>
+              <p>Choisis un étudiant pour voir ses cours à rattraper.</p>
             ) : coursARattraper.length === 0 ? (
               <p>Aucun cours à rattraper.</p>
             ) : (
@@ -486,19 +562,30 @@ export default function RattrapagesPage({ profile }) {
                       <strong style={styles.courseTitle}>
                         {item.chapitre}
                       </strong>
+
                       <p style={styles.meta}>
                         Date séance : {item.date_seance}
                       </p>
+
                       <p style={styles.meta}>
                         Numéro séance : {item.numero_seance}
                       </p>
+
                       <p style={styles.meta}>
                         Centre : {item.class_name}
                       </p>
+
                       <p style={styles.meta}>
                         Année : {item.annee}
                       </p>
-                      <p style={styles.coursRate}>Cours raté</p>
+
+                      {item.origine === 'transfert' ? (
+                        <p style={styles.coursTransfert}>
+                          Cours manquant après transfert
+                        </p>
+                      ) : (
+                        <p style={styles.coursRate}>Cours raté</p>
+                      )}
                     </div>
                   </label>
                 )
@@ -527,6 +614,7 @@ export default function RattrapagesPage({ profile }) {
           historiqueRattrapages.map((item) => (
             <div key={item.id} style={styles.itemCard}>
               <strong style={styles.studentName}>{item.studentName}</strong>
+
               <p style={styles.meta}>Matricule : {item.matricule}</p>
               <p style={styles.meta}>Cours : {item.chapitre}</p>
               <p style={styles.meta}>
@@ -567,6 +655,7 @@ const styles = {
     boxSizing: 'border-box',
     overflowX: 'hidden',
   },
+
   card: {
     background: '#ffffff',
     border: '2px solid #e3d8f5',
@@ -577,6 +666,7 @@ const styles = {
     boxSizing: 'border-box',
     overflow: 'hidden',
   },
+
   cardMini: {
     background: '#fbf8ff',
     border: '1px solid #eadcf9',
@@ -584,6 +674,7 @@ const styles = {
     padding: 16,
     marginBottom: 16,
   },
+
   title: {
     marginTop: 0,
     marginBottom: 16,
@@ -592,6 +683,7 @@ const styles = {
     fontSize: 32,
     fontWeight: 'bold',
   },
+
   sectionTitle: {
     marginTop: 0,
     marginBottom: 16,
@@ -600,6 +692,7 @@ const styles = {
     fontSize: 24,
     fontWeight: 'bold',
   },
+
   input: {
     width: '100%',
     padding: 14,
@@ -610,6 +703,7 @@ const styles = {
     boxSizing: 'border-box',
     background: '#fff',
   },
+
   textarea: {
     width: '100%',
     minHeight: 90,
@@ -622,6 +716,7 @@ const styles = {
     resize: 'vertical',
     background: '#fff',
   },
+
   infoBox: {
     background: '#fff7fc',
     border: '2px solid #eadcf9',
@@ -630,6 +725,7 @@ const styles = {
     marginBottom: 12,
     color: '#2b0a78',
   },
+
   checkboxCard: {
     display: 'flex',
     alignItems: 'flex-start',
@@ -640,14 +736,17 @@ const styles = {
     marginBottom: 12,
     background: '#fff',
   },
+
   checkboxContent: {
     flex: 1,
   },
+
   courseTitle: {
     color: '#2b0a78',
     fontSize: 18,
     whiteSpace: 'pre-wrap',
   },
+
   itemCard: {
     border: '1px solid #eadcf9',
     borderRadius: 14,
@@ -655,32 +754,44 @@ const styles = {
     marginBottom: 12,
     background: '#fff',
   },
+
   studentName: {
     color: '#2b0a78',
     fontSize: 20,
   },
+
   meta: {
     margin: '6px 0',
     color: '#666',
     wordBreak: 'break-word',
     whiteSpace: 'pre-wrap',
   },
+
   coursRate: {
     color: '#d91e18',
     fontWeight: 'bold',
     margin: '8px 0 0',
   },
+
+  coursTransfert: {
+    color: '#1565c0',
+    fontWeight: 'bold',
+    margin: '8px 0 0',
+  },
+
   coursRattrape: {
     color: '#1565c0',
     fontWeight: 'bold',
     margin: '8px 0',
   },
+
   row: {
     display: 'flex',
     gap: 10,
     marginTop: 12,
     flexWrap: 'wrap',
   },
+
   primaryButtonFull: {
     width: '100%',
     padding: 14,
@@ -691,6 +802,7 @@ const styles = {
     fontSize: 16,
     fontWeight: 'bold',
   },
+
   dangerButton: {
     width: '100%',
     padding: 12,
@@ -701,6 +813,7 @@ const styles = {
     fontSize: 15,
     fontWeight: 'bold',
   },
+
   message: {
     marginTop: 14,
     fontWeight: 'bold',

@@ -379,6 +379,116 @@ export default function SeancesPage({ profile }) {
     getSeances()
   }
 
+  async function cloturerSeance(seanceId) {
+    const ok = window.confirm(
+      'Clôturer cette séance et marquer absents tous les non pointés ?'
+    )
+    if (!ok) return
+
+    setLoading(true)
+    setMessage('')
+
+    const { data: seanceData, error: seanceError } = await supabase
+      .from('seances')
+      .select('id, class_id, cloturee')
+      .eq('id', seanceId)
+      .single()
+
+    if (seanceError || !seanceData) {
+      console.log(seanceError)
+      setLoading(false)
+      setMessage('Erreur récupération séance')
+      return
+    }
+
+    const { data: studentsData, error: studentsError } = await supabase
+      .from('students')
+      .select('id')
+      .eq('class_id', seanceData.class_id)
+
+    if (studentsError) {
+      console.log(studentsError)
+      setLoading(false)
+      setMessage('Erreur chargement étudiants')
+      return
+    }
+
+    const { data: presencesData, error: presencesError } = await supabase
+      .from('presences')
+      .select('student_id')
+      .eq('seance_id', seanceId)
+
+    if (presencesError) {
+      console.log(presencesError)
+      setLoading(false)
+      setMessage('Erreur chargement présences')
+      return
+    }
+
+    const pointedIds = new Set((presencesData || []).map((p) => String(p.student_id)))
+
+    const absentsToInsert = (studentsData || [])
+      .filter((student) => !pointedIds.has(String(student.id)))
+      .map((student) => ({
+        student_id: student.id,
+        seance_id: seanceId,
+        statut: 'absent',
+      }))
+
+    if (absentsToInsert.length > 0) {
+      const { error: insertError } = await supabase
+        .from('presences')
+        .insert(absentsToInsert)
+
+      if (insertError) {
+        console.log(insertError)
+        setLoading(false)
+        setMessage('Erreur ajout absents')
+        return
+      }
+    }
+
+    const { error: closeError } = await supabase
+      .from('seances')
+      .update({ cloturee: true })
+      .eq('id', seanceId)
+
+    setLoading(false)
+
+    if (closeError) {
+      console.log(closeError)
+      setMessage('Erreur clôture séance')
+      return
+    }
+
+    setMessage('Séance clôturée avec succès')
+    getSeances()
+  }
+
+  async function reouvrirSeance(seanceId) {
+    const ok = window.confirm('Réouvrir cette séance ?')
+    if (!ok) return
+
+    setLoading(true)
+    setMessage('')
+
+    const { error } = await supabase
+      .from('seances')
+      .update({ cloturee: false })
+      .eq('id', seanceId)
+
+    setLoading(false)
+
+    if (error) {
+      console.log(error)
+      setMessage('Erreur réouverture séance')
+      return
+    }
+
+    setMessage('Séance réouverte avec succès')
+    getSeances()
+  }
+
   function openSeance(id) {
     setSelectedSeanceId(id)
   }
@@ -538,6 +648,26 @@ export default function SeancesPage({ profile }) {
                 >
                   {seance.cloturee ? 'Voir séance clôturée' : 'Ouvrir séance'}
                 </button>
+
+                {!seance.cloturee ? (
+                  <button
+                    type="button"
+                    style={styles.closeButton}
+                    onClick={() => cloturerSeance(seance.id)}
+                    disabled={loading}
+                  >
+                    Clôturer séance
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    style={styles.reopenButton}
+                    onClick={() => reouvrirSeance(seance.id)}
+                    disabled={loading}
+                  >
+                    Réouvrir séance
+                  </button>
+                )}
 
                 <button
                   type="button"
@@ -699,6 +829,26 @@ const styles = {
     borderRadius: 10,
     border: 'none',
     background: '#7b61c9',
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: 'bold',
+    flex: 1,
+  },
+  closeButton: {
+    padding: '10px 14px',
+    borderRadius: 10,
+    border: 'none',
+    background: '#f39c12',
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: 'bold',
+    flex: 1,
+  },
+  reopenButton: {
+    padding: '10px 14px',
+    borderRadius: 10,
+    border: 'none',
+    background: '#16a085',
     color: '#fff',
     fontSize: 14,
     fontWeight: 'bold',
