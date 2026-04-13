@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from './supabaseClient'
+import AssistantProfilePage from './pages/AssistantProfilePage'
+
 
 import HomePage from './pages/HomePage'
 import CentresPage from './pages/CentresPage'
@@ -338,6 +340,10 @@ export default function App() {
 
     if (page === 'bilans') {
       return <BilansPage profile={activeProfile} />
+    }
+
+    if (page === 'assistant-profile') {
+      return <AssistantProfilePage profile={activeProfile} />
     }
 
     if (page === 'create-assistant') {

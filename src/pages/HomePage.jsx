@@ -11,6 +11,17 @@ export default function HomePage({ onNavigate, profile, onLogout }) {
           },
         ]
       : []),
+
+    ...(!isAdmin
+      ? [
+          {
+            key: 'assistant-profile',
+            title: 'Mon profil',
+            subtitle: 'Ajouter ou modifier mes informations',
+          },
+        ]
+      : []),
+
     {
       key: 'students',
       title: 'Étudiants',
@@ -32,7 +43,6 @@ export default function HomePage({ onNavigate, profile, onLogout }) {
         ? 'Créer les séances et choisir le centre'
         : 'Gérer les séances de mon centre',
     },
-
     {
       key: 'rattrapages',
       title: 'Rattrapages',
@@ -40,8 +50,6 @@ export default function HomePage({ onNavigate, profile, onLogout }) {
         ? 'Gérer les cours rattrapés'
         : 'Rattraper les cours non faits',
     },
-
-
     {
       key: 'paiements',
       title: 'Paiements',
@@ -57,6 +65,7 @@ export default function HomePage({ onNavigate, profile, onLogout }) {
         : 'Voir le bilan de mon centre',
     },
   ]
+
 
   return (
     <div style={styles.page}>
